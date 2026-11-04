@@ -2,7 +2,7 @@
 (() => {
   "use strict";
 
-  const REELROOM_VERSION = "v7";
+  const REELROOM_VERSION = "v8";
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -161,6 +161,7 @@
     renderChips();
     renderActiveFilters();
     renderGrid(list);
+    renderContinue();
     $("#resultCount").textContent = `${list.length} of ${state.items.length} link${state.items.length === 1 ? "" : "s"}`;
     $("#demoBanner").hidden = !state.items.some((i) => i.demo);
     $("#emptyState").hidden = list.length > 0;
@@ -251,6 +252,7 @@
       <span class="badge ${item.platform}">${esc(PLATFORM_LABEL[item.platform] || item.platform)}</span>
       ${item.demo ? '<span class="demo-badge">DEMO</span>' : ""}
       <span class="type-badge">${esc(TYPE_LABEL[item.media_type] || item.media_type)}</span>
+      ${Number(item.progress) > 0.02 && !item.watched ? `<span class="resume-badge">Resume</span><span class="thumb-progress"><i style="width:${Math.round(Math.min(1, Number(item.progress)) * 100)}%"></i></span>` : ""}
       <div class="play-overlay"><span>▶</span></div>
     </div>`;
   }
@@ -299,10 +301,19 @@
   // ---------- player ----------
   function currentList() { return filtered(); }
 
-  function openPlayer(id) {
-    const list = currentList();
-    const idx = list.findIndex((i) => i.id === id);
+  function openPlayer(id, fromRail) {
+    let list = currentList();
+    let idx = list.findIndex((i) => i.id === id);
+    if (idx === -1 && fromRail) {
+      // the item may be outside the current filter — clear filters so prev/next still work
+      state.view = "all"; state.platform = ""; state.collection = ""; state.tag = ""; state.search = "";
+      const si = $("#searchInput"); if (si) si.value = "";
+      render();
+      list = currentList();
+      idx = list.findIndex((i) => i.id === id);
+    }
     if (idx === -1) return;
+    state.returnFocusId = id;
     state.playerIndex = idx;
     state.fbUseAlt = false;
     state.useBackup = null;
@@ -335,7 +346,7 @@
       badge.style.cssText = "font-size:11px;color:#9a9a9a;border:1px solid #3a3a3a;border-radius:6px;padding:2px 6px;flex-shrink:0;";
       top.appendChild(badge);
     }
-    try { console.log("ReelRoom " + REELROOM_VERSION + " (backup links)"); } catch {}
+    try { console.log("ReelRoom " + REELROOM_VERSION + " (fullscreen, TV mode, up next)"); } catch {}
   }
 
   function ensurePlayerActionButtons() {
@@ -454,7 +465,10 @@
     const apply = (aspect) => {
       const a = aspect || fallback;
       const availW = stage.clientWidth || Math.min(1100, window.innerWidth - 48);
-      const availH = Math.min(window.innerHeight * 0.70, 620);
+      const big = inFullscreen() || !!prefs.theatre;
+      const availH = big
+        ? Math.max(240, (stage.clientHeight || window.innerHeight) - 28)
+        : Math.min(window.innerHeight * 0.70, 620);
       let w = availH * a;
       let h = availH;
       if (w > availW) { w = availW; h = w / a; }
@@ -488,6 +502,29 @@
     const primaryIsPost = primary.includes("/plugins/post.php");
     state.fbUseAlt = mode === "post" ? !primaryIsPost : primaryIsPost;
     renderPlayer(item);
+  }
+
+  function embedWithApi(platform, item, url) {
+    if (!url) return url;
+    try {
+      const u = new URL(url);
+      if (/youtube(-nocookie)?\.com$/.test(u.hostname)) {
+        u.searchParams.set("enablejsapi", "1");
+        if (/^https?:/.test(location.origin)) u.searchParams.set("origin", location.origin);
+        const pos = Number(item.watch_seconds) || 0;
+        const prog = Number(item.progress) || 0;
+        if (pos > 5 && prog > 0.02 && prog < 0.92) u.searchParams.set("start", String(Math.floor(pos)));
+      }
+      return u.href;
+    } catch { return url; }
+  }
+
+  async function markOpened(item) {
+    try {
+      const updated = await api(`/api/items/${item.id}`, { method: "PATCH", body: { last_opened_at: new Date().toISOString() } });
+      const idx = state.items.findIndex((i) => i.id === updated.id);
+      if (idx >= 0) state.items[idx] = updated;
+    } catch {}
   }
 
   function renderPlayer(item) {
@@ -542,14 +579,48 @@
       }
     }
 
+    cancelCountdown();
     const cls = stageClass(active, embed);
-    stage.innerHTML = embed
-      ? `<div class="${cls}" id="stageBox"><iframe src="${esc(embed)}" title="${esc(item.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`
+    const embedSrc = embedWithApi(active.platform, item, embed);
+    stage.innerHTML = embedSrc
+      ? `<div class="${cls}" id="stageBox"><iframe src="${esc(embedSrc)}" title="${esc(item.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`
       : `<div style="padding:40px;color:#aaa;">No embed available. Use “Open original”.</div>`;
 
     if (item.platform === "facebook" && !useBackup && !embed.includes("/plugins/post.php")) {
       sizeFacebookStage(item);
     }
+
+    // playback reporting + continue-watching tracking
+    resetBridge(active.platform);
+    state.activePlatform = active.platform;
+    const frame = stage.querySelector("iframe");
+    if (frame && active.platform === "youtube") {
+      frame.addEventListener("load", () => {
+        ytHandshake(frame);
+        setTimeout(() => ytHandshake(frame), 900);
+        setTimeout(() => ytHandshake(frame), 2600);
+      });
+    }
+    startTracking(item);
+    markOpened(item);
+    renderUpNext({ ...item, platform: active.platform });
+    if (prefs.autoplay && !reportsProgress(active.platform) && prefs.advanceSecs > 0) {
+      startCountdown(prefs.advanceSecs);
+    }
+    clearTimeout(state.reportWatchdog);
+    if (reportsProgress(active.platform)) {
+      state.reportWatchdog = setTimeout(() => {
+        if ($("#playerModal").hidden || bridge.duration > 0) return;
+        if (prefs.autoplay && prefs.advanceSecs > 0) {
+          setUpnextStatus("This player isn't reporting playback — falling back to the " + prefs.advanceSecs + "s timer.");
+          startCountdown(prefs.advanceSecs);
+        } else {
+          setUpnextStatus("This player isn't reporting playback. Set a timer above, or press › for the next one.");
+        }
+      }, 12000);
+    }
+    $("#playerModal").classList.toggle("theatre", !!prefs.theatre);
+    updateFsBtn();
 
     const note = document.querySelector(".embed-note");
     if (note) {
@@ -568,16 +639,30 @@
   }
 
   function closePlayer() {
+    const item = currentList()[state.playerIndex];
+    cancelCountdown();
+    stopTracking();
+    clearTimeout(state.reportWatchdog);
+    if (item) saveProgress(item, true).then(() => renderContinue());
+    if (inFullscreen()) exitFullscreen();
     $("#playerModal").hidden = true;
     $("#playerStage").innerHTML = "";
     document.body.style.overflow = "";
     state.playerIndex = -1;
+    resetBridge("");
+    const back = state.returnFocusId && document.querySelector(`#grid .card[data-id="${state.returnFocusId}"]`);
+    if (back) back.focus();
   }
 
   function stepPlayer(delta) {
     const list = currentList();
     const next = state.playerIndex + delta;
     if (next < 0 || next >= list.length) return;
+    const prevItem = list[state.playerIndex];
+    cancelCountdown();
+    stopTracking();
+    clearTimeout(state.reportWatchdog);
+    if (prevItem) saveProgress(prevItem, true);
     state.playerIndex = next;
     state.fbUseAlt = false;
     state.useBackup = null;
@@ -760,6 +845,245 @@
   }
 
   // ---------- events ----------
+  // ================= v8: prefs, fullscreen, theatre, TV, up-next =================
+  const PREFS_KEY = "reelroom.prefs.v1";
+  function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; } }
+  const prefs = Object.assign({ tvMode: null, theatre: false, autoplay: true, advanceSecs: 0, continueClearedAt: null }, loadPrefs());
+  function savePrefs() { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {} }
+
+  function looksLikeTV() {
+    return /AFT[MTS]?|AmazonWebAppPlatform|Silk\/|SMART-TV|SmartTV|HbbTV|BRAVIA|Roku|GoogleTV|Android TV|AppleTV/i.test(navigator.userAgent || "");
+  }
+  function tvEnabled() { return prefs.tvMode === null ? looksLikeTV() : !!prefs.tvMode; }
+  function applyTvMode() {
+    document.body.classList.toggle("tv-mode", tvEnabled());
+    const b = $("#tvModeBtn");
+    if (b) { b.setAttribute("aria-pressed", String(tvEnabled())); b.title = tvEnabled() ? "TV mode is on" : "TV / remote mode"; }
+  }
+  function toggleTvMode() {
+    prefs.tvMode = !tvEnabled(); savePrefs(); applyTvMode(); render();
+    toast(tvEnabled() ? "TV mode on — use the arrow keys" : "TV mode off");
+    if (tvEnabled()) setTimeout(() => { const c = $("#grid .card"); if (c) c.focus(); }, 40);
+  }
+
+  // ---- fullscreen / theatre ----
+  function pseudoFs() { const s = $("#playerShell"); return !!s && s.classList.contains("pseudo-fs"); }
+  function inFullscreen() { return !!document.fullscreenElement || pseudoFs(); }
+  function updateFsBtn() {
+    const b = $("#fullscreenBtn");
+    if (b) { b.textContent = inFullscreen() ? "⤢" : "⛶"; b.title = inFullscreen() ? "Exit fullscreen (F / Esc)" : "Fullscreen (F)"; }
+    const t = $("#theatreBtn");
+    if (t) t.setAttribute("aria-pressed", String(prefs.theatre));
+  }
+  function refitStage() {
+    const it = currentList()[state.playerIndex];
+    if (it && it.platform === "facebook") sizeFacebookStage(it);
+  }
+  async function toggleFullscreen() {
+    const shell = $("#playerShell");
+    if (!shell) return;
+    if (inFullscreen()) return exitFullscreen();
+    try {
+      if (!shell.requestFullscreen) throw new Error("unsupported");
+      await shell.requestFullscreen();
+    } catch {
+      shell.classList.add("pseudo-fs");
+    }
+    updateFsBtn(); setTimeout(refitStage, 60);
+  }
+  function exitFullscreen() {
+    const shell = $("#playerShell");
+    if (shell) shell.classList.remove("pseudo-fs");
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    updateFsBtn(); setTimeout(refitStage, 60);
+  }
+  function toggleTheatre() {
+    prefs.theatre = !prefs.theatre; savePrefs();
+    $("#playerModal").classList.toggle("theatre", prefs.theatre);
+    updateFsBtn(); setTimeout(refitStage, 60);
+    toast(prefs.theatre ? "Theatre mode on" : "Theatre mode off");
+  }
+
+  // ---- remote / keyboard grid navigation ----
+  function gridNav(e, container) {
+    const cards = Array.from(container.querySelectorAll(".card"));
+    if (!cards.length) return;
+    const i = cards.indexOf(document.activeElement.closest ? document.activeElement.closest(".card") : null);
+    if (i < 0) { if (["ArrowRight", "ArrowDown"].includes(e.key)) { e.preventDefault(); cards[0].focus(); } return; }
+    const gap = 14;
+    let cols = 0;
+    if (container.classList.contains("rail")) cols = cards.length;
+    else {
+      const tpl = (window.getComputedStyle(container).gridTemplateColumns || "").trim();
+      if (tpl && tpl !== "none") cols = tpl.split(/\s+/).filter(Boolean).length;
+      if (!cols) {
+        const first = cards[0].getBoundingClientRect();
+        cols = Math.max(1, Math.round((container.clientWidth + gap) / ((first.width || 240) + gap)));
+      }
+    }
+    cols = Math.max(1, cols);
+    let n = null;
+    if (e.key === "ArrowRight") n = i + 1;
+    if (e.key === "ArrowLeft") n = i - 1;
+    if (e.key === "ArrowDown") n = i + cols;
+    if (e.key === "ArrowUp") n = i - cols;
+    if (n === null) return;
+    e.preventDefault();
+    if (n >= 0 && n < cards.length) { cards[n].focus(); cards[n].scrollIntoView({ block: "nearest", inline: "nearest" }); }
+  }
+
+  // ---- playback bridge: YouTube + TikTok report position and ending ----
+  const bridge = { win: null, platform: "", currentTime: 0, duration: 0, ended: false, openSeconds: 0 };
+  function resetBridge(platform) {
+    bridge.win = null; bridge.platform = platform || "";
+    bridge.currentTime = 0; bridge.duration = 0; bridge.ended = false; bridge.openSeconds = 0;
+  }
+  function ytHandshake(iframe) {
+    if (!iframe || !iframe.contentWindow) return;
+    const msg = JSON.stringify({ event: "listening", id: "reelroom", channel: "widget" });
+    for (const origin of ["https://www.youtube-nocookie.com", "https://www.youtube.com"]) {
+      try { iframe.contentWindow.postMessage(msg, origin); } catch {}
+    }
+  }
+  function onPlayerMessage(ev) {
+    const iframe = $("#playerStage iframe");
+    if (!iframe || ev.source !== iframe.contentWindow) return;
+    const origin = String(ev.origin || "");
+    if (bridge.platform === "youtube" && /youtube(-nocookie)?\.com$/.test(origin.replace(/^https?:\/\//, ""))) {
+      let data = ev.data;
+      if (typeof data === "string") { try { data = JSON.parse(data); } catch { return; } }
+      if (!data || typeof data !== "object") return;
+      if (data.event === "onReady") ytHandshake(iframe);
+      const info = data.info || {};
+      if (typeof info.currentTime === "number") bridge.currentTime = info.currentTime;
+      if (typeof info.duration === "number" && info.duration > 0) bridge.duration = info.duration;
+      const st = data.event === "onStateChange" ? data.info : info.playerState;
+      if (st === 0) handleEnded();
+      return;
+    }
+    if (bridge.platform === "tiktok" && /tiktok\.com$/.test(origin.replace(/^https?:\/\//, ""))) {
+      const d = ev.data;
+      if (!d || d["x-tiktok-player"] !== true) return;
+      if (d.type === "onCurrentTime" && d.value) {
+        if (typeof d.value.currentTime === "number") bridge.currentTime = d.value.currentTime;
+        if (typeof d.value.duration === "number" && d.value.duration > 0) bridge.duration = d.value.duration;
+      }
+      if (d.type === "onStateChange" && Number(d.value) === 0) handleEnded();
+    }
+  }
+  function reportsProgress(platform) { return platform === "youtube" || platform === "tiktok"; }
+  function liveProgress() {
+    if (bridge.duration > 0) return Math.min(1, Math.max(0, bridge.currentTime / bridge.duration));
+    return 0;
+  }
+
+  // ---- progress persistence ----
+  let saveTimer = null, tickTimer = null;
+  function startTracking(item) {
+    stopTracking();
+    tickTimer = setInterval(() => { bridge.openSeconds += 5; }, 5000);
+    saveTimer = setInterval(() => saveProgress(item, false), 15000);
+  }
+  function stopTracking() { clearInterval(tickTimer); clearInterval(saveTimer); tickTimer = saveTimer = null; }
+  async function saveProgress(item, final) {
+    if (!item) return;
+    const p = liveProgress();
+    const pos = bridge.duration > 0 ? Math.round(bridge.currentTime) : Math.round(bridge.openSeconds);
+    const payload = { last_opened_at: new Date().toISOString(), watch_seconds: pos };
+    if (p > 0) payload.progress = p;
+    if (p >= 0.92 && !item.watched) payload.watched = true;
+    // don't overwrite a known position with a blank one
+    if (!p && !pos && !final) return;
+    try {
+      const updated = await api(`/api/items/${item.id}`, { method: "PATCH", body: payload });
+      const idx = state.items.findIndex((i) => i.id === updated.id);
+      if (idx >= 0) state.items[idx] = updated;
+      if (payload.watched) render();
+    } catch {}
+  }
+
+  // ---- up next + autoplay ----
+  let countdownTimer = null;
+  function cancelCountdown() {
+    clearInterval(countdownTimer); countdownTimer = null;
+    const c = $("#autoplayCountdown"); if (c) c.hidden = true;
+  }
+  function startCountdown(seconds) {
+    cancelCountdown();
+    const list = currentList();
+    if (state.playerIndex >= list.length - 1) { setUpnextStatus("End of this list."); return; }
+    let n = seconds;
+    const box = $("#autoplayCountdown"), num = $("#countdownNum");
+    box.hidden = false; num.textContent = n;
+    countdownTimer = setInterval(() => {
+      n--; num.textContent = n;
+      if (n <= 0) { cancelCountdown(); stepPlayer(1); }
+    }, 1000);
+  }
+  function handleEnded() {
+    if (bridge.ended) return;
+    bridge.ended = true;
+    const item = currentList()[state.playerIndex];
+    if (item) saveProgress(item, true);
+    if (prefs.autoplay) startCountdown(5);
+  }
+  function setUpnextStatus(text) { const el = $("#upnextStatus"); if (el) el.textContent = text; }
+  function renderUpNext(item) {
+    const bar = $("#upnextBar"), listBox = $("#upnextList");
+    if (!bar || !listBox) return;
+    const list = currentList();
+    const upcoming = list.slice(state.playerIndex + 1, state.playerIndex + 5);
+    listBox.innerHTML = upcoming.length
+      ? upcoming.map((u, k) => {
+          const th = thumbnailFor(u);
+          return `<button class="upnext-item" data-jump="${state.playerIndex + 1 + k}">
+            ${th ? `<img src="${esc(th)}" alt="" loading="lazy" onerror="this.remove()">` : `<img alt="">`}
+            <span><span class="un-t">${esc(displayTitle(u))}</span><span class="un-m">${esc(PLATFORM_LABEL[u.platform] || u.platform)}</span></span>
+          </button>`;
+        }).join("")
+      : `<span class="upnext-empty">Nothing after this in the current list.</span>`;
+    listBox.querySelectorAll("[data-jump]").forEach((b) => b.addEventListener("click", () => {
+      cancelCountdown();
+      const target = Number(b.dataset.jump);
+      stepPlayer(target - state.playerIndex);
+    }));
+
+    const ab = $("#autoplayBtn");
+    if (ab) { ab.textContent = "Autoplay: " + (prefs.autoplay ? "on" : "off"); ab.setAttribute("aria-pressed", String(prefs.autoplay)); ab.classList.toggle("btn-primary", prefs.autoplay); }
+    const sel = $("#advanceSelect"); if (sel) sel.value = String(prefs.advanceSecs);
+
+    if (!prefs.autoplay) setUpnextStatus("Autoplay is off — press › for the next one.");
+    else if (reportsProgress(item.platform)) setUpnextStatus("Advances when the video actually ends.");
+    else if (prefs.advanceSecs > 0) setUpnextStatus(`${PLATFORM_LABEL[item.platform]} doesn't report endings — using the ${prefs.advanceSecs}s timer.`);
+    else setUpnextStatus(`${PLATFORM_LABEL[item.platform]} doesn't report endings — set a timer above, or press ›.`);
+  }
+
+  // ---- continue watching ----
+  function continueItems() {
+    const cut = prefs.continueClearedAt ? Date.parse(prefs.continueClearedAt) : 0;
+    return state.items
+      .filter((i) => i.last_opened_at && !i.watched && Date.parse(i.last_opened_at) > cut)
+      .sort((a, b) => String(b.last_opened_at).localeCompare(String(a.last_opened_at)))
+      .slice(0, 12);
+  }
+  function renderContinue() {
+    const sec = $("#continueSection"), rail = $("#continueRail");
+    if (!sec || !rail) return;
+    const items = continueItems();
+    sec.hidden = items.length === 0;
+    if (!items.length) { rail.innerHTML = ""; return; }
+    rail.innerHTML = items.map((item) => `
+      <article class="card" data-id="${item.id}" tabindex="0" role="button" aria-label="Resume ${esc(displayTitle(item))}">
+        ${thumbHtml(item)}
+        <div class="card-body"><h3 class="card-title">${esc(displayTitle(item))}</h3>
+        <div class="card-author">${esc(item.author || PLATFORM_LABEL[item.platform] || "")}</div></div>
+      </article>`).join("");
+    rail.querySelectorAll(".card").forEach((card) => {
+      card.addEventListener("click", () => openPlayer(card.dataset.id, true));
+      card.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPlayer(card.dataset.id, true); } });
+    });
+  }
+
   function bind() {
     $("#addBtn").addEventListener("click", () => { $("#addModal").hidden = false; $("#singleUrl").focus(); });
     $("#emptyAddBtn").addEventListener("click", () => { $("#addModal").hidden = false; $("#singleUrl").focus(); });
@@ -840,6 +1164,47 @@
     $("#saveEditBtn").addEventListener("click", saveEdit);
     $("#refreshMetaBtn").addEventListener("click", refreshMeta);
 
+    // ---- v8 controls ----
+    const tvBtn = $("#tvModeBtn");
+    if (tvBtn) tvBtn.addEventListener("click", toggleTvMode);
+    const fsBtn = $("#fullscreenBtn");
+    if (fsBtn) fsBtn.addEventListener("click", toggleFullscreen);
+    const thBtn = $("#theatreBtn");
+    if (thBtn) thBtn.addEventListener("click", toggleTheatre);
+    const apBtn = $("#autoplayBtn");
+    if (apBtn) apBtn.addEventListener("click", () => {
+      prefs.autoplay = !prefs.autoplay; savePrefs();
+      if (!prefs.autoplay) cancelCountdown();
+      const it = currentList()[state.playerIndex];
+      if (it) renderUpNext({ ...it, platform: state.activePlatform || it.platform });
+    });
+    const advSel = $("#advanceSelect");
+    if (advSel) advSel.addEventListener("change", (e) => {
+      prefs.advanceSecs = Number(e.target.value) || 0; savePrefs();
+      cancelCountdown();
+      const it = currentList()[state.playerIndex];
+      if (it) {
+        const plat = state.activePlatform || it.platform;
+        renderUpNext({ ...it, platform: plat });
+        cancelCountdown();
+        if (prefs.autoplay && prefs.advanceSecs > 0 && !reportsProgress(plat)) startCountdown(prefs.advanceSecs);
+      }
+    });
+    const cancelAp = $("#cancelAutoplayBtn");
+    if (cancelAp) cancelAp.addEventListener("click", () => { cancelCountdown(); setUpnextStatus("Auto-advance cancelled."); });
+    const clearCont = $("#clearContinueBtn");
+    if (clearCont) clearCont.addEventListener("click", () => {
+      prefs.continueClearedAt = new Date().toISOString(); savePrefs(); renderContinue();
+      toast("Continue watching cleared");
+    });
+
+    document.addEventListener("fullscreenchange", () => { updateFsBtn(); setTimeout(refitStage, 60); });
+    window.addEventListener("message", onPlayerMessage);
+    window.addEventListener("beforeunload", () => {
+      const it = currentList()[state.playerIndex];
+      if (it && !$("#playerModal").hidden) saveProgress(it, true);
+    });
+
     window.addEventListener("resize", () => {
       if ($("#playerModal").hidden) return;
       const it = currentList()[state.playerIndex];
@@ -850,18 +1215,42 @@
       const tag = document.activeElement && document.activeElement.tagName;
       const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
       if (e.key === "Escape") {
+        if (inFullscreen()) { exitFullscreen(); return; }
         if (!$("#editModal").hidden) $("#editModal").hidden = true;
         else if (!$("#addModal").hidden) $("#addModal").hidden = true;
         else if (!$("#playerModal").hidden) closePlayer();
+        else if (tvEnabled() && document.activeElement && document.activeElement.closest(".card")) document.activeElement.blur();
+        return;
       }
-      if (!typing && e.key === "/") { e.preventDefault(); $("#searchInput").focus(); }
-      if (!$("#playerModal").hidden && !typing) {
-        if (e.key === "ArrowLeft") stepPlayer(-1);
-        if (e.key === "ArrowRight") stepPlayer(1);
+      if (typing) return;
+      if (e.key === "/") { e.preventDefault(); $("#searchInput").focus(); return; }
+      if (!$("#playerModal").hidden) {
+        if (e.key === "ArrowLeft") { e.preventDefault(); stepPlayer(-1); }
+        if (e.key === "ArrowRight") { e.preventDefault(); stepPlayer(1); }
+        if (e.key === "f" || e.key === "F") { e.preventDefault(); toggleFullscreen(); }
+        if (e.key === "t" || e.key === "T") { e.preventDefault(); toggleTheatre(); }
+        if (e.key === "Backspace") { e.preventDefault(); closePlayer(); }
+        return;
+      }
+      // grid shortcuts when the player is closed
+      const active = document.activeElement;
+      const arrows = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
+      if (active && active.classList && active.classList.contains("card")) {
+        if (arrows.includes(e.key)) {
+          const box = active.closest("#grid") || active.closest("#continueRail");
+          if (box) gridNav(e, box);
+        }
+        if (e.key === "Backspace") { e.preventDefault(); active.blur(); }
+      } else if (tvEnabled() && arrows.includes(e.key)) {
+        const first = $("#grid .card");
+        if (first) { e.preventDefault(); first.focus(); }
       }
     });
   }
 
   bind();
+  applyTvMode();
+  if (prefs.theatre) $("#playerModal").classList.add("theatre");
+  updateFsBtn();
   checkAuth().then((ok) => { if (ok) loadItems(); });
 })();

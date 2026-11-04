@@ -18,6 +18,7 @@
     <input type="search" id="searchInput" placeholder="Search titles, creators, tags…  ( / )" autocomplete="off">
   </div>
   <div class="topbar-actions">
+    <button class="icon-btn" id="tvModeBtn" title="TV / remote mode" aria-pressed="false">📺</button>
     <button class="btn btn-primary" id="addBtn">+ Add links</button>
     <div class="menu-wrap">
       <button class="icon-btn" id="moreBtn" aria-label="More options">⋮</button>
@@ -81,6 +82,14 @@
       </div>
     </div>
 
+    <section class="continue" id="continueSection" hidden>
+      <div class="continue-head">
+        <h2>Continue watching</h2>
+        <button class="btn btn-small" id="clearContinueBtn">Clear</button>
+      </div>
+      <div class="rail" id="continueRail"></div>
+    </section>
+
     <div class="active-filters" id="activeFilters"></div>
     <div class="grid" id="grid"></div>
     <div class="empty" id="emptyState" hidden>
@@ -94,13 +103,15 @@
 
 <!-- Player modal -->
 <div class="modal-backdrop" id="playerModal" hidden>
-  <div class="player-shell" role="dialog" aria-modal="true" aria-label="Video player">
+  <div class="player-shell" id="playerShell" role="dialog" aria-modal="true" aria-label="Video player">
     <div class="player-top">
       <div class="player-title-wrap">
         <div class="player-title" id="playerTitle"></div>
         <div class="player-sub" id="playerSub"></div>
       </div>
       <div class="player-nav">
+        <button class="icon-btn" id="theatreBtn" title="Theatre mode (T)" aria-pressed="false">▭</button>
+        <button class="icon-btn" id="fullscreenBtn" title="Fullscreen (F)">⛶</button>
         <button class="icon-btn" id="prevBtn" title="Previous (←)">‹</button>
         <button class="icon-btn" id="nextBtn" title="Next (→)">›</button>
         <button class="icon-btn" id="closePlayerBtn" title="Close (Esc)">✕</button>
@@ -116,6 +127,26 @@
       <button class="btn btn-small" id="editBtn">Edit</button>
       <button class="btn btn-small btn-danger" id="deleteBtn">Delete</button>
       <span class="embed-note">Playback blocked? Use “Open original” — some posts require login or disallow embedding.</span>
+    </div>
+    <div class="upnext" id="upnextBar">
+      <div class="upnext-head">
+        <button class="btn btn-small" id="autoplayBtn" aria-pressed="true">Autoplay: on</button>
+        <label class="advance-label">Reels &amp; posts advance after
+          <select id="advanceSelect" aria-label="Auto-advance delay for Facebook and Instagram">
+            <option value="0">off</option>
+            <option value="30">30s</option>
+            <option value="60">60s</option>
+            <option value="90">90s</option>
+            <option value="120">2 min</option>
+          </select>
+        </label>
+        <span class="upnext-status" id="upnextStatus"></span>
+        <span class="countdown" id="autoplayCountdown" hidden>
+          Next in <strong id="countdownNum">5</strong>s
+          <button class="btn btn-small" id="cancelAutoplayBtn">Cancel</button>
+        </span>
+      </div>
+      <div class="upnext-list" id="upnextList"></div>
     </div>
   </div>
 </div>
@@ -205,6 +236,7 @@
 </div>
 
 <input type="file" id="importFile" accept="application/json,.json" hidden>
+<div class="tv-hint">← → ↑ ↓ move · OK open · Back close · F fullscreen · T theatre</div>
 <div class="toast" id="toast" hidden></div>
 <script src="app.js"></script>
 </body>

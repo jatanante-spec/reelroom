@@ -285,3 +285,106 @@ a { color: inherit; text-decoration: none; }
   #addBtn { padding: 8px 12px; }
   .player-actions .btn { flex: 1; text-align: center; }
 }
+
+/* ================= v8: fullscreen, theatre, TV mode, up-next ================= */
+
+/* --- theatre + fullscreen --- */
+#playerModal.theatre { padding: 0; }
+#playerModal.theatre .player-shell {
+  max-width: 100%; width: 100%; height: 100vh; max-height: 100vh; border-radius: 0; border: 0;
+}
+#playerModal.theatre .player-stage { flex: 1; }
+.player-shell:fullscreen {
+  max-width: 100%; width: 100%; height: 100%; max-height: 100%; border-radius: 0; border: 0; background: #000;
+}
+.player-shell:fullscreen .player-stage { flex: 1; }
+.player-shell.pseudo-fs {
+  position: fixed; inset: 0; z-index: 9999; max-width: 100%; width: 100%;
+  height: 100%; max-height: 100%; border-radius: 0; border: 0; background: #000;
+}
+.player-shell.pseudo-fs .player-stage { flex: 1; }
+/* keep the countdown visible in fullscreen so it can always be cancelled */
+.player-shell:fullscreen .upnext-list, .player-shell.pseudo-fs .upnext-list { display: none; }
+.player-shell:fullscreen .upnext, .player-shell.pseudo-fs .upnext { border-top: 0; padding: 6px 18px 10px; }
+#playerModal.theatre .player-stage,
+.player-shell:fullscreen .player-stage,
+.player-shell.pseudo-fs .player-stage { flex: 1; min-height: 0; }
+#playerModal.theatre .stage-video,
+.player-shell:fullscreen .stage-video,
+.player-shell.pseudo-fs .stage-video { max-height: none; height: 100%; }
+#playerModal.theatre .stage-vertical,
+.player-shell:fullscreen .stage-vertical,
+.player-shell.pseudo-fs .stage-vertical { height: 100%; max-height: none; }
+#playerModal.theatre .upnext-list,
+.player-shell:fullscreen .upnext-list { max-height: 90px; }
+
+/* --- progress bar on cards --- */
+.thumb-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255,255,255,.28); z-index: 2; }
+.thumb-progress i { display: block; height: 100%; background: var(--accent, #ff4d4d); }
+.resume-badge {
+  position: absolute; bottom: 10px; left: 8px; z-index: 2; font-size: 10px; font-weight: 800;
+  background: rgba(0,0,0,.78); color: #fff; padding: 2px 7px; border-radius: 5px;
+}
+
+/* --- continue watching rail --- */
+.continue { margin: 0 0 22px; }
+.continue-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.continue-head h2 { font-size: 16px; margin: 0; }
+.rail { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
+.rail .card { flex: 0 0 220px; scroll-snap-align: start; }
+.rail::-webkit-scrollbar { height: 8px; }
+.rail::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 4px; }
+
+/* --- up next --- */
+.upnext { border-top: 1px solid var(--border); padding: 10px 18px 14px; }
+.upnext-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 9px; }
+.advance-label { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+.advance-label select { padding: 4px 6px; font-size: 12px; }
+.upnext-status { font-size: 12px; color: var(--text-faint); }
+.countdown { font-size: 13px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.countdown strong { color: #4b8dff; font-variant-numeric: tabular-nums; }
+.upnext-list { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.upnext-item {
+  display: flex; gap: 9px; align-items: center; flex: 0 0 250px; text-align: left;
+  background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 10px; padding: 7px; cursor: pointer;
+}
+.upnext-item:hover { border-color: #555; }
+.upnext-item img { width: 68px; height: 42px; object-fit: cover; border-radius: 6px; flex-shrink: 0; background: #222; }
+.upnext-item .un-t { font-size: 12px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.upnext-item .un-m { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+.upnext-empty { font-size: 12px; color: var(--text-faint); }
+
+/* --- TV / remote mode --- */
+body.tv-mode { font-size: 18px; }
+body.tv-mode .sidebar { display: none; }
+body.tv-mode .main { margin-left: 0; padding: 18px 22px 70px; }
+body.tv-mode .grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 22px; }
+body.tv-mode .card-title { font-size: 19px; -webkit-line-clamp: 2; }
+body.tv-mode .card-author { font-size: 15px; }
+body.tv-mode .mini-tag { font-size: 12px; }
+body.tv-mode .chip { font-size: 16px; padding: 10px 16px; }
+body.tv-mode .btn { font-size: 16px; padding: 11px 16px; }
+body.tv-mode .btn-small { font-size: 15px; }
+body.tv-mode .rail .card { flex: 0 0 300px; }
+body.tv-mode .card-actions { display: none; }
+body.tv-mode #tvModeBtn { background: #4b8dff; color: #fff; border-radius: 8px; }
+body.tv-mode .player-title { font-size: 22px; }
+body.tv-mode .upnext-item { flex: 0 0 320px; }
+body.tv-mode .upnext-item .un-t { font-size: 15px; }
+
+/* unmistakable focus for a remote / keyboard */
+.card:focus-visible, body.tv-mode .card:focus {
+  outline: 4px solid #4b8dff; outline-offset: 3px; border-radius: var(--radius);
+}
+body.tv-mode .card:focus { transform: scale(1.03); transition: transform .12s ease; }
+body.tv-mode .btn:focus-visible, body.tv-mode .chip:focus-visible,
+body.tv-mode .upnext-item:focus-visible, body.tv-mode .icon-btn:focus-visible,
+body.tv-mode select:focus-visible {
+  outline: 4px solid #4b8dff; outline-offset: 2px;
+}
+.tv-hint {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+  background: rgba(0,0,0,.85); border: 1px solid #3a3a3a; color: #ddd;
+  font-size: 13px; padding: 7px 14px; border-radius: 999px; z-index: 55; display: none;
+}
+body.tv-mode .tv-hint { display: block; }
