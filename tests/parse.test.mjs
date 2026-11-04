@@ -59,6 +59,8 @@ test("facebook page video", async () => {
 test("facebook reel", async () => {
   const p = await parseUrl("https://www.facebook.com/reel/123456789");
   assert.equal(p.media_type, "reel");
+  assert.match(p.embed_url, /plugins\/post\.php/);
+  assert.match(p.embed_url_alt, /plugins\/video\.php/);
 });
 
 test("unsupported", async () => {

@@ -16,6 +16,7 @@
     playerIndex: -1,
     editingId: null,
     pollTimer: null,
+    fbUseAlt: false,
   };
 
   const PLATFORM_LABEL = { youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram", facebook: "Facebook" };
@@ -260,9 +261,20 @@
     const idx = list.findIndex((i) => i.id === id);
     if (idx === -1) return;
     state.playerIndex = idx;
+    state.fbUseAlt = false;
     renderPlayer(list[idx]);
     $("#playerModal").hidden = false;
     document.body.style.overflow = "hidden";
+  }
+
+  function facebookEmbeds(item) {
+    const canonical = safeUrl(item.canonical_url || item.url);
+    if (!canonical) return { primary: safeUrl(item.embed_url), alt: "" };
+    const post = "https://www.facebook.com/plugins/post.php?" + new URLSearchParams({ href: canonical, show_text: "true" });
+    const video = "https://www.facebook.com/plugins/video.php?" + new URLSearchParams({ href: canonical, show_text: "false", autoplay: "true", mute: "0" });
+    if (item.media_type === "reel") return { primary: post, alt: video };
+    if (item.media_type === "video") return { primary: video, alt: post };
+    return { primary: safeUrl(item.embed_url) || post, alt: "" };
   }
 
   function renderPlayer(item) {
@@ -273,14 +285,36 @@
     $("#watchedBtn").textContent = item.watched ? "✓ Watched" : "Mark watched";
 
     const stage = $("#playerStage");
-    const embed = safeUrl(item.embed_url);
+    let embed = safeUrl(item.embed_url);
+    const fbToggle = $("#fbEmbedToggleBtn");
+    fbToggle.hidden = true;
+    if (item.platform === "facebook") {
+      const { primary, alt } = facebookEmbeds(item);
+      embed = state.fbUseAlt && alt ? alt : primary;
+      if (alt) {
+        fbToggle.hidden = false;
+        fbToggle.textContent = embed.includes("/plugins/post.php") ? "Try video player" : "Try post embed";
+      }
+    }
     let cls = "stage-video";
     if (["tiktok", "instagram"].includes(item.platform) && ["reel", "short", "video"].includes(item.media_type)) cls = "stage-vertical";
     if (item.platform === "youtube" && item.media_type === "short") cls = "stage-vertical";
     if (["instagram", "facebook"].includes(item.platform) && ["post", "image"].includes(item.media_type)) cls = "stage-post";
+    if (item.platform === "facebook") {
+      if (embed.includes("/plugins/post.php")) cls = "stage-post";
+      else if (item.media_type === "reel") cls = "stage-vertical";
+      else cls = "stage-video";
+    }
     stage.innerHTML = embed
       ? `<div class="${cls}"><iframe src="${esc(embed)}" title="${esc(item.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`
       : `<div style="padding:40px;color:#aaa;">No embed available. Use “Open original”.</div>`;
+
+    const note = document.querySelector(".embed-note");
+    if (note) {
+      note.textContent = item.platform === "facebook"
+        ? "Facebook may block one player. Use the “Try…” button to switch embeds. If both fail, Facebook is not allowing this video to be embedded."
+        : "Playback blocked? Use “Open original” — some posts require login or disallow embedding.";
+    }
 
     const list = currentList();
     $("#prevBtn").disabled = state.playerIndex <= 0;
@@ -299,7 +333,20 @@
     const next = state.playerIndex + delta;
     if (next < 0 || next >= list.length) return;
     state.playerIndex = next;
+    state.fbUseAlt = false;
     renderPlayer(list[next]);
+  }
+
+  async function copyCurrentLink() {
+    const item = currentList()[state.playerIndex];
+    const url = item?.canonical_url || item?.url;
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast("Link copied");
+    } catch {
+      prompt("Copy this link:", url);
+    }
   }
 
   async function toggleFav(item) {
@@ -508,6 +555,12 @@
     $("#closePlayerBtn").addEventListener("click", closePlayer);
     $("#prevBtn").addEventListener("click", () => stepPlayer(-1));
     $("#nextBtn").addEventListener("click", () => stepPlayer(1));
+    $("#fbEmbedToggleBtn").addEventListener("click", () => {
+      state.fbUseAlt = !state.fbUseAlt;
+      const item = currentList()[state.playerIndex];
+      if (item) renderPlayer(item);
+    });
+    $("#copyLinkBtn").addEventListener("click", copyCurrentLink);
     $("#favBtn").addEventListener("click", () => { const it = currentList()[state.playerIndex]; if (it) toggleFav(it); });
     $("#watchedBtn").addEventListener("click", () => { const it = currentList()[state.playerIndex]; if (it) toggleWatched(it); });
     $("#editBtn").addEventListener("click", () => { const it = currentList()[state.playerIndex]; if (it) openEdit(it); });

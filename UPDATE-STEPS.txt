@@ -1,0 +1,18 @@
+ReelRoom update — Facebook embed switch
+
+What changed:
+- Facebook Reels now try Facebook's post embed first.
+- The player has a new button: "Try video player" / "Try post embed".
+- There is also a "Copy link" button.
+
+How to update your live site:
+1. Download this ZIP and unzip it.
+2. Open your ReelRoom repository on GitHub.
+3. Upload the files and folders from INSIDE the unzipped folder.
+   Replace the existing files when GitHub asks.
+   Important: netlify.toml and package.json must stay at the top level of the repo.
+4. Commit the changes.
+5. Netlify should redeploy automatically. Wait for the deploy to finish.
+6. Open your site, open the Facebook Reel, and click the new "Try..." button.
+
+If both Facebook players say the video is unavailable, Facebook is blocking that video from being embedded. ReelRoom cannot override Facebook's block.

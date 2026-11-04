@@ -155,15 +155,23 @@ export async function parseUrl(input) {
     } else {
       canonical = "https://www.facebook.com" + path;
     }
-    let embed;
-    if (mediaType === "video" || mediaType === "reel") {
-      embed = "https://www.facebook.com/plugins/video.php?" + new URLSearchParams({
-        href: canonical, show_text: "false", autoplay: "true", mute: "0",
-      });
+    const videoEmbed = "https://www.facebook.com/plugins/video.php?" + new URLSearchParams({
+      href: canonical, show_text: "false", autoplay: "true", mute: "0",
+    });
+    const postEmbed = "https://www.facebook.com/plugins/post.php?" + new URLSearchParams({
+      href: canonical, show_text: "true",
+    });
+    let embed, embedAlt;
+    if (mediaType === "reel") {
+      // Reels often render more reliably as embedded posts than as the video player.
+      embed = postEmbed;
+      embedAlt = videoEmbed;
+    } else if (mediaType === "video") {
+      embed = videoEmbed;
+      embedAlt = postEmbed;
     } else {
-      embed = "https://www.facebook.com/plugins/post.php?" + new URLSearchParams({
-        href: canonical, show_text: "true",
-      });
+      embed = postEmbed;
+      embedAlt = null;
     }
     const label = { video: "video", reel: "Reel", image: "photo", post: "post" }[mediaType];
     return {
@@ -172,6 +180,7 @@ export async function parseUrl(input) {
       external_id: externalId,
       canonical_url: canonical,
       embed_url: embed,
+      embed_url_alt: embedAlt,
       thumbnail_url: null,
       title: "Facebook " + label,
     };
