@@ -277,6 +277,49 @@
     return { primary: safeUrl(item.embed_url) || post, alt: "" };
   }
 
+  function ensurePlayerActionButtons() {
+    const actions = document.querySelector(".player-actions");
+    if (!actions) return;
+    const fav = $("#favBtn");
+    const oldToggle = $("#fbEmbedToggleBtn");
+    if (oldToggle) oldToggle.hidden = true;
+
+    let postBtn = $("#fbPostPlayerBtn");
+    if (!postBtn) {
+      postBtn = document.createElement("button");
+      postBtn.id = "fbPostPlayerBtn";
+      postBtn.type = "button";
+      postBtn.className = "btn btn-small";
+      actions.insertBefore(postBtn, fav || null);
+    }
+    let videoBtn = $("#fbVideoPlayerBtn");
+    if (!videoBtn) {
+      videoBtn = document.createElement("button");
+      videoBtn.id = "fbVideoPlayerBtn";
+      videoBtn.type = "button";
+      videoBtn.className = "btn btn-small";
+      actions.insertBefore(videoBtn, fav || null);
+    }
+    let copyBtn = $("#copyLinkBtn");
+    if (!copyBtn) {
+      copyBtn = document.createElement("button");
+      copyBtn.id = "copyLinkBtn";
+      copyBtn.type = "button";
+      copyBtn.className = "btn btn-small";
+      copyBtn.textContent = "Copy link";
+      actions.insertBefore(copyBtn, fav || null);
+    }
+  }
+
+  function setFacebookPlayer(mode) {
+    const item = currentList()[state.playerIndex];
+    if (!item || item.platform !== "facebook") return;
+    const { primary } = facebookEmbeds(item);
+    const primaryIsPost = primary.includes("/plugins/post.php");
+    state.fbUseAlt = mode === "post" ? !primaryIsPost : primaryIsPost;
+    renderPlayer(item);
+  }
+
   function renderPlayer(item) {
     $("#playerTitle").textContent = item.title || item.url;
     $("#playerSub").textContent = [item.author, PLATFORM_LABEL[item.platform], TYPE_LABEL[item.media_type], item.collection].filter(Boolean).join(" · ");
@@ -286,14 +329,22 @@
 
     const stage = $("#playerStage");
     let embed = safeUrl(item.embed_url);
-    const fbToggle = $("#fbEmbedToggleBtn");
-    fbToggle.hidden = true;
+    ensurePlayerActionButtons();
+    const fbPostBtn = $("#fbPostPlayerBtn");
+    const fbVideoBtn = $("#fbVideoPlayerBtn");
+    if (fbPostBtn) fbPostBtn.hidden = true;
+    if (fbVideoBtn) fbVideoBtn.hidden = true;
     if (item.platform === "facebook") {
       const { primary, alt } = facebookEmbeds(item);
       embed = state.fbUseAlt && alt ? alt : primary;
-      if (alt) {
-        fbToggle.hidden = false;
-        fbToggle.textContent = embed.includes("/plugins/post.php") ? "Try video player" : "Try post embed";
+      if (alt && fbPostBtn && fbVideoBtn) {
+        const usingPost = embed.includes("/plugins/post.php");
+        fbPostBtn.hidden = false;
+        fbVideoBtn.hidden = false;
+        fbPostBtn.textContent = usingPost ? "Post player ✓" : "Try post player";
+        fbVideoBtn.textContent = usingPost ? "Try video player" : "Video player ✓";
+        fbPostBtn.disabled = usingPost;
+        fbVideoBtn.disabled = !usingPost;
       }
     }
     let cls = "stage-video";
@@ -552,14 +603,18 @@
     $("#singleAddBtn").addEventListener("click", addSingle);
     $("#bulkAddBtn").addEventListener("click", addBulk);
 
+    ensurePlayerActionButtons();
     $("#closePlayerBtn").addEventListener("click", closePlayer);
     $("#prevBtn").addEventListener("click", () => stepPlayer(-1));
     $("#nextBtn").addEventListener("click", () => stepPlayer(1));
-    $("#fbEmbedToggleBtn").addEventListener("click", () => {
-      state.fbUseAlt = !state.fbUseAlt;
-      const item = currentList()[state.playerIndex];
-      if (item) renderPlayer(item);
-    });
+    const playerActions = document.querySelector(".player-actions");
+    if (playerActions) {
+      playerActions.addEventListener("click", (e) => {
+        const id = e.target && e.target.id;
+        if (id === "fbPostPlayerBtn") setFacebookPlayer("post");
+        if (id === "fbVideoPlayerBtn") setFacebookPlayer("video");
+      });
+    }
     $("#copyLinkBtn").addEventListener("click", copyCurrentLink);
     $("#favBtn").addEventListener("click", () => { const it = currentList()[state.playerIndex]; if (it) toggleFav(it); });
     $("#watchedBtn").addEventListener("click", () => { const it = currentList()[state.playerIndex]; if (it) toggleWatched(it); });
