@@ -2,7 +2,7 @@
 (() => {
   "use strict";
 
-  const REELROOM_VERSION = "v4";
+  const REELROOM_VERSION = "v5";
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -69,17 +69,28 @@
       schedulePoll();
     } catch (e) { toast(e.message); }
   }
+  const META_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
+  function needsMeta(item) {
+    if (item.metadata_status === "pending") return true;
+    if (!["youtube", "tiktok", "instagram", "facebook"].includes(item.platform)) return false;
+    if (!item.metadata_fetched_at) return true;
+    const at = Date.parse(item.metadata_fetched_at);
+    if (!Number.isFinite(at)) return true;
+    return Date.now() - at > META_REFRESH_MS;
+  }
+
   function schedulePoll() {
     clearTimeout(state.pollTimer);
-    if (state.items.some((i) => i.metadata_status === "pending")) {
+    if (state.items.some(needsMeta)) {
       state.pollTimer = setTimeout(refreshPending, 1200);
     }
   }
   async function refreshPending() {
+    clearTimeout(state.pollTimer);
     try {
-      const res = await api("/api/refresh-pending", { method: "POST" });
+      await api("/api/refresh-pending", { method: "POST" });
+      // loadItems() re-runs schedulePoll(), which continues only while work remains.
       await loadItems();
-      if (res.remaining > 0) state.pollTimer = setTimeout(refreshPending, 800);
     } catch { /* auth modal will handle 401 */ }
   }
 
