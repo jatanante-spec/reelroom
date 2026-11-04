@@ -1,0 +1,21 @@
+{
+  "name": "reelroom-netlify",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Embed-only personal video wall for Netlify (static frontend + Functions + Blobs).",
+  "scripts": {
+    "dev": "netlify dev",
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^11.1.7"
+  },
+  "devDependencies": {
+    "netlify-cli": "^27.16.2"
+  },
+  "engines": {
+    "node": ">=20.12"
+  }
+}
