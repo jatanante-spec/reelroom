@@ -2,6 +2,7 @@
 (() => {
   "use strict";
 
+  const REELROOM_VERSION = "v3";
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -17,6 +18,7 @@
     editingId: null,
     pollTimer: null,
     fbUseAlt: false,
+    useBackup: null,
   };
 
   const PLATFORM_LABEL = { youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram", facebook: "Facebook" };
@@ -224,6 +226,7 @@
           <div class="card-meta">
             ${(item.tags || []).slice(0, 3).map((t) => `<span class="mini-tag">#${esc(t)}</span>`).join("")}
             ${item.collection ? `<span class="mini-tag">📁 ${esc(item.collection)}</span>` : ""}
+            ${item.backup_embed_url ? `<span class="mini-tag" title="A backup link is set">▶ backup</span>` : ""}
             <span class="card-actions">
               <button data-act="fav" title="Favorite" class="${item.favorite ? "fav-on" : ""}">${item.favorite ? "★" : "☆"}</button>
               <button data-act="edit" title="Edit">✎</button>
@@ -262,6 +265,7 @@
     if (idx === -1) return;
     state.playerIndex = idx;
     state.fbUseAlt = false;
+    state.useBackup = null;
     renderPlayer(list[idx]);
     $("#playerModal").hidden = false;
     document.body.style.overflow = "hidden";
@@ -272,9 +276,26 @@
     if (!canonical) return { primary: safeUrl(item.embed_url), alt: "" };
     const post = "https://www.facebook.com/plugins/post.php?" + new URLSearchParams({ href: canonical, show_text: "true" });
     const video = "https://www.facebook.com/plugins/video.php?" + new URLSearchParams({ href: canonical, show_text: "false", autoplay: "true", mute: "0" });
-    if (item.media_type === "reel") return { primary: post, alt: video };
+    // Verified: Facebook's post.php plugin returns an error page for /reel/ links,
+    // so Reels must use the video player. Only plain video/post links get a fallback.
+    if (item.media_type === "reel") return { primary: video, alt: "" };
     if (item.media_type === "video") return { primary: video, alt: post };
     return { primary: safeUrl(item.embed_url) || post, alt: "" };
+  }
+
+  function stampVersion() {
+    const footer = document.querySelector(".side-footer");
+    if (footer) footer.textContent = "Embed-only \u00b7 nothing is downloaded \u00b7 " + REELROOM_VERSION;
+    const top = document.querySelector(".topbar");
+    if (top && !$("#versionBadge")) {
+      const badge = document.createElement("span");
+      badge.id = "versionBadge";
+      badge.textContent = REELROOM_VERSION;
+      badge.title = "ReelRoom build version";
+      badge.style.cssText = "font-size:11px;color:#9a9a9a;border:1px solid #3a3a3a;border-radius:6px;padding:2px 6px;flex-shrink:0;";
+      top.appendChild(badge);
+    }
+    try { console.log("ReelRoom " + REELROOM_VERSION + " (backup links)"); } catch {}
   }
 
   function ensurePlayerActionButtons() {
@@ -309,6 +330,71 @@
       copyBtn.textContent = "Copy link";
       actions.insertBefore(copyBtn, fav || null);
     }
+    for (const [id, text] of [["sourceOriginalBtn", "Original"], ["sourceBackupBtn", "Backup"], ["addBackupBtn", "Add backup link"]]) {
+      let btn = $("#" + id);
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.id = id;
+        btn.type = "button";
+        btn.className = "btn btn-small";
+        btn.textContent = text;
+        actions.insertBefore(btn, fav || null);
+      }
+      btn.hidden = true;
+    }
+  }
+
+  function ensureBackupField() {
+    if ($("#editBackupUrl")) return;
+    const modal = $("#editModal");
+    if (!modal) return;
+    const actionsRow = modal.querySelector(".modal-actions");
+    const label = document.createElement("label");
+    label.innerHTML = 'Backup link (optional)' +
+      '<input type="url" id="editBackupUrl" placeholder="Paste the same clip on YouTube / TikTok / Instagram">' +
+      '<span style="display:block;font-size:12px;color:#9a9a9a;margin-top:4px;">If the original site blocks embedding, ReelRoom plays this link instead.</span>';
+    if (actionsRow) actionsRow.parentNode.insertBefore(label, actionsRow);
+    else modal.appendChild(label);
+  }
+
+  function activeSources(item) {
+    let originalEmbed = safeUrl(item.embed_url);
+    if (item.platform === "facebook") {
+      const { primary, alt } = facebookEmbeds(item);
+      originalEmbed = state.fbUseAlt && alt ? alt : primary;
+    }
+    const sources = [{
+      key: "original",
+      label: PLATFORM_LABEL[item.platform] || "Original",
+      embed: originalEmbed,
+      platform: item.platform,
+      media_type: item.media_type,
+      url: safeUrl(item.canonical_url || item.url),
+    }];
+    const backupEmbed = safeUrl(item.backup_embed_url);
+    if (backupEmbed) {
+      sources.push({
+        key: "backup",
+        label: PLATFORM_LABEL[item.backup_platform] || "Backup",
+        embed: backupEmbed,
+        platform: item.backup_platform,
+        media_type: item.backup_media_type,
+        url: safeUrl(item.backup_canonical_url || item.backup_url),
+      });
+    }
+    return sources;
+  }
+
+  function stageClass(src, embed) {
+    if (src.platform === "facebook") {
+      if (embed.includes("/plugins/post.php")) return "stage-post";
+      if (src.media_type === "reel") return "stage-vertical";
+      return "stage-video";
+    }
+    if (["tiktok", "instagram"].includes(src.platform) && ["reel", "short", "video"].includes(src.media_type)) return "stage-vertical";
+    if (src.platform === "youtube" && src.media_type === "short") return "stage-vertical";
+    if (src.platform === "instagram" && ["post", "image"].includes(src.media_type)) return "stage-post";
+    return "stage-video";
   }
 
   function setFacebookPlayer(mode) {
@@ -328,15 +414,39 @@
     $("#watchedBtn").textContent = item.watched ? "✓ Watched" : "Mark watched";
 
     const stage = $("#playerStage");
-    let embed = safeUrl(item.embed_url);
     ensurePlayerActionButtons();
+
+    const sources = activeSources(item);
+    const hasBackup = sources.length > 1;
+    const useBackup = hasBackup && state.useBackup !== false;
+    const active = useBackup ? sources[1] : sources[0];
+    const embed = active.embed;
+
+    const origBtn = $("#sourceOriginalBtn");
+    const backBtn = $("#sourceBackupBtn");
+    const addBackupBtn = $("#addBackupBtn");
+    if (origBtn && backBtn) {
+      origBtn.hidden = !hasBackup;
+      backBtn.hidden = !hasBackup;
+      if (hasBackup) {
+        origBtn.textContent = (useBackup ? "" : "✓ ") + "Original · " + sources[0].label;
+        backBtn.textContent = (useBackup ? "✓ " : "") + "Backup · " + sources[1].label;
+        origBtn.disabled = !useBackup;
+        backBtn.disabled = useBackup;
+      }
+    }
+    if (addBackupBtn) {
+      addBackupBtn.hidden = false;
+      addBackupBtn.textContent = hasBackup ? "Change backup link" : "Add backup link";
+    }
+    $("#openOriginalBtn").href = active.url || safeUrl(item.canonical_url || item.url);
+
     const fbPostBtn = $("#fbPostPlayerBtn");
     const fbVideoBtn = $("#fbVideoPlayerBtn");
     if (fbPostBtn) fbPostBtn.hidden = true;
     if (fbVideoBtn) fbVideoBtn.hidden = true;
-    if (item.platform === "facebook") {
-      const { primary, alt } = facebookEmbeds(item);
-      embed = state.fbUseAlt && alt ? alt : primary;
+    if (!useBackup && item.platform === "facebook") {
+      const { alt } = facebookEmbeds(item);
       if (alt && fbPostBtn && fbVideoBtn) {
         const usingPost = embed.includes("/plugins/post.php");
         fbPostBtn.hidden = false;
@@ -347,24 +457,21 @@
         fbVideoBtn.disabled = !usingPost;
       }
     }
-    let cls = "stage-video";
-    if (["tiktok", "instagram"].includes(item.platform) && ["reel", "short", "video"].includes(item.media_type)) cls = "stage-vertical";
-    if (item.platform === "youtube" && item.media_type === "short") cls = "stage-vertical";
-    if (["instagram", "facebook"].includes(item.platform) && ["post", "image"].includes(item.media_type)) cls = "stage-post";
-    if (item.platform === "facebook") {
-      if (embed.includes("/plugins/post.php")) cls = "stage-post";
-      else if (item.media_type === "reel") cls = "stage-vertical";
-      else cls = "stage-video";
-    }
+
+    const cls = stageClass(active, embed);
     stage.innerHTML = embed
       ? `<div class="${cls}"><iframe src="${esc(embed)}" title="${esc(item.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`
       : `<div style="padding:40px;color:#aaa;">No embed available. Use “Open original”.</div>`;
 
     const note = document.querySelector(".embed-note");
     if (note) {
-      note.textContent = item.platform === "facebook"
-        ? "Facebook may block one player. Use the “Try…” button to switch embeds. If both fail, Facebook is not allowing this video to be embedded."
-        : "Playback blocked? Use “Open original” — some posts require login or disallow embedding.";
+      if (useBackup) {
+        note.textContent = "Playing your backup link (" + sources[1].label + "). Switch to “Original” to see the source post.";
+      } else if (item.platform === "facebook") {
+        note.textContent = "If Facebook says “content owned by someone else”, Facebook is refusing to let this video play on other websites. Add a backup link to the same clip on YouTube, TikTok or Instagram and ReelRoom will play that here instead.";
+      } else {
+        note.textContent = "Playback blocked? Use “Open original”, or add a backup link to the same clip on another site.";
+      }
     }
 
     const list = currentList();
@@ -385,6 +492,7 @@
     if (next < 0 || next >= list.length) return;
     state.playerIndex = next;
     state.fbUseAlt = false;
+    state.useBackup = null;
     renderPlayer(list[next]);
   }
 
@@ -497,6 +605,8 @@
     $("#editNotes").value = item.notes || "";
     $("#editType").value = item.media_type || "video";
     $("#editFavorite").checked = !!item.favorite;
+    ensureBackupField();
+    $("#editBackupUrl").value = item.backup_url || "";
     $("#editModal").hidden = false;
   }
 
@@ -514,6 +624,7 @@
           notes: $("#editNotes").value.trim(),
           media_type: $("#editType").value,
           favorite: $("#editFavorite").checked,
+          backup_url: $("#editBackupUrl") ? $("#editBackupUrl").value.trim() : "",
         },
       });
       const idx = state.items.findIndex((i) => i.id === updated.id);
@@ -603,6 +714,7 @@
     $("#singleAddBtn").addEventListener("click", addSingle);
     $("#bulkAddBtn").addEventListener("click", addBulk);
 
+    stampVersion();
     ensurePlayerActionButtons();
     $("#closePlayerBtn").addEventListener("click", closePlayer);
     $("#prevBtn").addEventListener("click", () => stepPlayer(-1));
@@ -613,6 +725,19 @@
         const id = e.target && e.target.id;
         if (id === "fbPostPlayerBtn") setFacebookPlayer("post");
         if (id === "fbVideoPlayerBtn") setFacebookPlayer("video");
+        if (id === "sourceOriginalBtn" || id === "sourceBackupBtn") {
+          state.useBackup = id === "sourceBackupBtn";
+          const it = currentList()[state.playerIndex];
+          if (it) renderPlayer(it);
+        }
+        if (id === "addBackupBtn") {
+          const it = currentList()[state.playerIndex];
+          if (it) {
+            openEdit(it);
+            const f = $("#editBackupUrl");
+            if (f) f.focus();
+          }
+        }
       });
     }
     $("#copyLinkBtn").addEventListener("click", copyCurrentLink);
