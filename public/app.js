@@ -2,7 +2,7 @@
 (() => {
   "use strict";
 
-  const REELROOM_VERSION = "v5";
+  const REELROOM_VERSION = "v6";
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -232,6 +232,17 @@
     return "";
   }
 
+  // Facebook prefixes og:title with engagement counts, e.g.
+  // "1M views \u00b7 15K reactions | How to manage your time". Strip that for display.
+  function displayTitle(item) {
+    const raw = String(item.title || item.url || "");
+    const cleaned = raw.replace(
+      /^(?:[\d.,]+\s*[KMBkmb]?\s*(?:views?|reactions?|likes?|comments?|shares?)\s*(?:[\u00b7\u2022]\s*)?)+\|\s*/i,
+      ""
+    ).trim();
+    return cleaned || raw;
+  }
+
   function thumbHtml(item) {
     const thumb = thumbnailFor(item);
     const ph = `<div class="thumb-placeholder ph-${item.platform}"><span class="big">${PLATFORM_ICON[item.platform] || "▶"}</span><span>${esc(PLATFORM_LABEL[item.platform] || item.platform)}</span></div>`;
@@ -247,10 +258,10 @@
   function renderGrid(list) {
     const grid = $("#grid");
     grid.innerHTML = list.map((item) => `
-      <article class="card" data-id="${item.id}" tabindex="0" role="button" aria-label="Play ${esc(item.title)}">
+      <article class="card" data-id="${item.id}" tabindex="0" role="button" aria-label="Play ${esc(displayTitle(item))}">
         ${thumbHtml(item)}
         <div class="card-body">
-          <h3 class="card-title">${esc(item.title || item.url)}</h3>
+          <h3 class="card-title">${esc(displayTitle(item))}</h3>
           <div class="card-author">${esc(item.author || PLATFORM_LABEL[item.platform] || "")} ${item.watched ? '<span class="watched-mark">✓ watched</span>' : ""}</div>
           <div class="card-meta">
             ${(item.tags || []).slice(0, 3).map((t) => `<span class="mini-tag">#${esc(t)}</span>`).join("")}
@@ -417,8 +428,9 @@
   function stageClass(src, embed) {
     if (src.platform === "facebook") {
       if (embed.includes("/plugins/post.php")) return "stage-post";
-      if (src.media_type === "reel") return "stage-vertical";
-      return "stage-video";
+      // Facebook's video plugin always renders a 16:9 landscape player, even for
+      // Reels. A 9:16 frame here made the player tiny with black space around it.
+      return "stage-fb";
     }
     if (["tiktok", "instagram"].includes(src.platform) && ["reel", "short", "video"].includes(src.media_type)) return "stage-vertical";
     if (src.platform === "youtube" && src.media_type === "short") return "stage-vertical";
@@ -436,7 +448,7 @@
   }
 
   function renderPlayer(item) {
-    $("#playerTitle").textContent = item.title || item.url;
+    $("#playerTitle").textContent = displayTitle(item);
     $("#playerSub").textContent = [item.author, PLATFORM_LABEL[item.platform], TYPE_LABEL[item.media_type], item.collection].filter(Boolean).join(" · ");
     $("#openOriginalBtn").href = safeUrl(item.canonical_url || item.url);
     $("#favBtn").textContent = item.favorite ? "★ Favorited" : "☆ Favorite";
