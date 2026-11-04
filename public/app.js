@@ -2,7 +2,7 @@
 (() => {
   "use strict";
 
-  const REELROOM_VERSION = "v6";
+  const REELROOM_VERSION = "v7";
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -306,9 +306,9 @@
     state.playerIndex = idx;
     state.fbUseAlt = false;
     state.useBackup = null;
-    renderPlayer(list[idx]);
     $("#playerModal").hidden = false;
     document.body.style.overflow = "hidden";
+    renderPlayer(list[idx]);
   }
 
   function facebookEmbeds(item) {
@@ -425,12 +425,55 @@
     return sources;
   }
 
+  // Facebook's player renders at the iframe's width and clips anything taller,
+  // so the frame must match the video's real shape. The preview image has the
+  // same proportions as the video, so we measure it once and cache the result.
+  const aspectCache = new Map();
+
+  function measureAspect(item) {
+    return new Promise((resolve) => {
+      if (aspectCache.has(item.id)) return resolve(aspectCache.get(item.id));
+      const src = thumbnailFor(item);
+      if (!src) return resolve(null);
+      const img = new Image();
+      const done = (val) => { if (val) aspectCache.set(item.id, val); resolve(val); };
+      img.onload = () => {
+        const a = img.naturalWidth / img.naturalHeight;
+        done(Number.isFinite(a) && a > 0.1 && a < 10 ? a : null);
+      };
+      img.onerror = () => done(null);
+      img.src = src;
+    });
+  }
+
+  function sizeFacebookStage(item) {
+    const box = document.getElementById("stageBox");
+    const stage = $("#playerStage");
+    if (!box || !stage) return;
+    const fallback = item.media_type === "reel" ? 9 / 16 : 16 / 9;
+    const apply = (aspect) => {
+      const a = aspect || fallback;
+      const availW = stage.clientWidth || Math.min(1100, window.innerWidth - 48);
+      const availH = Math.min(window.innerHeight * 0.70, 620);
+      let w = availH * a;
+      let h = availH;
+      if (w > availW) { w = availW; h = w / a; }
+      box.style.width = Math.round(w) + "px";
+      box.style.height = Math.round(h) + "px";
+    };
+    apply(aspectCache.get(item.id) || null);
+    measureAspect(item).then((a) => {
+      // only resize if this item is still the one on screen
+      const current = currentList()[state.playerIndex];
+      if (current && current.id === item.id) apply(a);
+    });
+  }
+
   function stageClass(src, embed) {
     if (src.platform === "facebook") {
       if (embed.includes("/plugins/post.php")) return "stage-post";
-      // Facebook's video plugin always renders a 16:9 landscape player, even for
-      // Reels. A 9:16 frame here made the player tiny with black space around it.
-      return "stage-fb";
+      // Shape varies per video; sizeFacebookStage() measures and fits it.
+      return "stage-fb-auto";
     }
     if (["tiktok", "instagram"].includes(src.platform) && ["reel", "short", "video"].includes(src.media_type)) return "stage-vertical";
     if (src.platform === "youtube" && src.media_type === "short") return "stage-vertical";
@@ -501,8 +544,12 @@
 
     const cls = stageClass(active, embed);
     stage.innerHTML = embed
-      ? `<div class="${cls}"><iframe src="${esc(embed)}" title="${esc(item.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`
+      ? `<div class="${cls}" id="stageBox"><iframe src="${esc(embed)}" title="${esc(item.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`
       : `<div style="padding:40px;color:#aaa;">No embed available. Use “Open original”.</div>`;
+
+    if (item.platform === "facebook" && !useBackup && !embed.includes("/plugins/post.php")) {
+      sizeFacebookStage(item);
+    }
 
     const note = document.querySelector(".embed-note");
     if (note) {
@@ -792,6 +839,12 @@
 
     $("#saveEditBtn").addEventListener("click", saveEdit);
     $("#refreshMetaBtn").addEventListener("click", refreshMeta);
+
+    window.addEventListener("resize", () => {
+      if ($("#playerModal").hidden) return;
+      const it = currentList()[state.playerIndex];
+      if (it && it.platform === "facebook") sizeFacebookStage(it);
+    });
 
     document.addEventListener("keydown", (e) => {
       const tag = document.activeElement && document.activeElement.tagName;
