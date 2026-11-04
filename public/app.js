@@ -2,7 +2,7 @@
 (() => {
   "use strict";
 
-  const REELROOM_VERSION = "v8";
+  const REELROOM_VERSION = "v9";
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -346,7 +346,7 @@
       badge.style.cssText = "font-size:11px;color:#9a9a9a;border:1px solid #3a3a3a;border-radius:6px;padding:2px 6px;flex-shrink:0;";
       top.appendChild(badge);
     }
-    try { console.log("ReelRoom " + REELROOM_VERSION + " (fullscreen, TV mode, up next)"); } catch {}
+    try { console.log("ReelRoom " + REELROOM_VERSION + " (video-first fullscreen, no crop)"); } catch {}
   }
 
   function ensurePlayerActionButtons() {
@@ -457,30 +457,95 @@
     });
   }
 
-  function sizeFacebookStage(item) {
+  let lastFitKey = "", stageRO = null, fitRaf = 0;
+
+  // Size the Facebook box to fit INSIDE the stage. The stage now has a definite
+  // height in every mode, so its size does not depend on the box -> no feedback
+  // loop, and the box can never end up taller than the space and get clipped.
+  function fitFacebook(item) {
     const box = document.getElementById("stageBox");
     const stage = $("#playerStage");
-    if (!box || !stage) return;
-    const fallback = item.media_type === "reel" ? 9 / 16 : 16 / 9;
-    const apply = (aspect) => {
-      const a = aspect || fallback;
-      const availW = stage.clientWidth || Math.min(1100, window.innerWidth - 48);
-      const big = inFullscreen() || !!prefs.theatre;
-      const availH = big
-        ? Math.max(240, (stage.clientHeight || window.innerHeight) - 28)
-        : Math.min(window.innerHeight * 0.70, 620);
-      let w = availH * a;
-      let h = availH;
-      if (w > availW) { w = availW; h = w / a; }
-      box.style.width = Math.round(w) + "px";
-      box.style.height = Math.round(h) + "px";
-    };
-    apply(aspectCache.get(item.id) || null);
+    if (!box || !stage || !item) return;
+    const a = aspectCache.get(item.id) || (item.media_type === "reel" ? 9 / 16 : 16 / 9);
+    const big = inFullscreen() || !!prefs.theatre;
+    const availW = stage.clientWidth || Math.min(1100, window.innerWidth - 48);
+    const availH = stage.clientHeight || Math.round(big ? window.innerHeight : Math.min(window.innerHeight * 0.70, 620));
+    let w = availH * a;
+    let h = availH;
+    if (w > availW) { w = availW; h = w / a; }
+    w = Math.max(60, Math.floor(w));
+    h = Math.max(60, Math.floor(h));
+    const key = w + "x" + h;
+    if (key === lastFitKey) return;
+    lastFitKey = key;
+    box.style.width = w + "px";
+    box.style.height = h + "px";
+  }
+
+  function sizeFacebookStage(item) {
+    if (!item) return;
+    fitFacebook(item);
     measureAspect(item).then((a) => {
-      // only resize if this item is still the one on screen
       const current = currentList()[state.playerIndex];
-      if (current && current.id === item.id) apply(a);
+      if (current && current.id === item.id) { lastFitKey = ""; fitFacebook(item); }
     });
+  }
+
+  // Re-fit whenever the stage actually changes size — title wrapping, buttons
+  // wrapping, rotation, entering/leaving fullscreen. This is the crop fix.
+  function observeStage() {
+    const stage = $("#playerStage");
+    if (!stage || typeof window.ResizeObserver !== "function") return;
+    if (stageRO) stageRO.disconnect();
+    let burst = 0, burstAt = 0;
+    stageRO = new window.ResizeObserver(() => {
+      cancelAnimationFrame(fitRaf);
+      fitRaf = requestAnimationFrame(() => {
+        const now = Date.now();
+        if (now - burstAt > 400) { burst = 0; burstAt = now; }
+        if (++burst > 10) return; // belt and braces: never spin on a pathological layout
+        const it = currentList()[state.playerIndex];
+        if (it && state.fbAutoFit) fitFacebook(it);
+      });
+    });
+    stageRO.observe(stage);
+  }
+
+  // ---- fullscreen chrome: tap an edge to reveal, auto-hide when idle ----
+  let fsIdleTimer = null;
+  function ensureFsChrome() {
+    const shell = $("#playerShell");
+    if (!shell || shell.querySelector(".fs-hit-top")) return;
+    for (const pos of ["top", "bottom"]) {
+      const z = document.createElement("div");
+      z.className = "fs-hit fs-hit-" + pos;
+      z.setAttribute("aria-hidden", "true");
+      z.addEventListener("pointerenter", () => showFsControls());
+      z.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if ($("#playerShell").classList.contains("fs-idle")) showFsControls();
+        else hideFsControls();
+      });
+      shell.appendChild(z);
+    }
+  }
+  function showFsControls() {
+    const shell = $("#playerShell");
+    if (!shell) return;
+    shell.classList.remove("fs-idle");
+    clearTimeout(fsIdleTimer);
+    if (inFullscreen()) fsIdleTimer = setTimeout(hideFsControls, 3500);
+  }
+  function hideFsControls() {
+    clearTimeout(fsIdleTimer); fsIdleTimer = null;
+    const shell = $("#playerShell");
+    if (shell && inFullscreen()) shell.classList.add("fs-idle");
+  }
+  function syncFsChrome() {
+    const shell = $("#playerShell");
+    if (!shell) return;
+    if (inFullscreen()) { ensureFsChrome(); showFsControls(); }
+    else { clearTimeout(fsIdleTimer); fsIdleTimer = null; shell.classList.remove("fs-idle", "counting"); }
   }
 
   function stageClass(src, embed) {
@@ -586,9 +651,11 @@
       ? `<div class="${cls}" id="stageBox"><iframe src="${esc(embedSrc)}" title="${esc(item.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`
       : `<div style="padding:40px;color:#aaa;">No embed available. Use “Open original”.</div>`;
 
-    if (item.platform === "facebook" && !useBackup && !embed.includes("/plugins/post.php")) {
-      sizeFacebookStage(item);
-    }
+    state.fbAutoFit = item.platform === "facebook" && !useBackup && !embed.includes("/plugins/post.php");
+    lastFitKey = "";
+    if (state.fbAutoFit) sizeFacebookStage(item);
+    observeStage();
+    syncFsChrome();
 
     // playback reporting + continue-watching tracking
     resetBridge(active.platform);
@@ -620,6 +687,8 @@
       }, 12000);
     }
     $("#playerModal").classList.toggle("theatre", !!prefs.theatre);
+    const titleEl = $("#playerTitle");
+    if (titleEl) titleEl.title = displayTitle(item);
     updateFsBtn();
 
     const note = document.querySelector(".embed-note");
@@ -871,13 +940,18 @@
   function inFullscreen() { return !!document.fullscreenElement || pseudoFs(); }
   function updateFsBtn() {
     const b = $("#fullscreenBtn");
-    if (b) { b.textContent = inFullscreen() ? "⤢" : "⛶"; b.title = inFullscreen() ? "Exit fullscreen (F / Esc)" : "Fullscreen (F)"; }
+    if (b) {
+      const on = inFullscreen();
+      b.title = on ? "Exit fullscreen (F / Esc)" : "Fullscreen (F)";
+      b.setAttribute("aria-label", on ? "Exit fullscreen" : "Fullscreen");
+      b.setAttribute("aria-pressed", String(on));
+    }
     const t = $("#theatreBtn");
     if (t) t.setAttribute("aria-pressed", String(prefs.theatre));
   }
   function refitStage() {
     const it = currentList()[state.playerIndex];
-    if (it && it.platform === "facebook") sizeFacebookStage(it);
+    if (it && state.fbAutoFit) { lastFitKey = ""; fitFacebook(it); }
   }
   async function toggleFullscreen() {
     const shell = $("#playerShell");
@@ -889,13 +963,17 @@
     } catch {
       shell.classList.add("pseudo-fs");
     }
-    updateFsBtn(); setTimeout(refitStage, 60);
+    updateFsBtn(); syncFsChrome(); setTimeout(refitStage, 60);
+    if (!prefs.fsHintShown) {
+      prefs.fsHintShown = true; savePrefs();
+      toast("Tap the video for controls · Esc or Back to exit");
+    }
   }
   function exitFullscreen() {
     const shell = $("#playerShell");
     if (shell) shell.classList.remove("pseudo-fs");
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
-    updateFsBtn(); setTimeout(refitStage, 60);
+    updateFsBtn(); syncFsChrome(); setTimeout(refitStage, 60);
   }
   function toggleTheatre() {
     prefs.theatre = !prefs.theatre; savePrefs();
@@ -1007,6 +1085,7 @@
   function cancelCountdown() {
     clearInterval(countdownTimer); countdownTimer = null;
     const c = $("#autoplayCountdown"); if (c) c.hidden = true;
+    const shell = $("#playerShell"); if (shell) shell.classList.remove("counting");
   }
   function startCountdown(seconds) {
     cancelCountdown();
@@ -1015,6 +1094,7 @@
     let n = seconds;
     const box = $("#autoplayCountdown"), num = $("#countdownNum");
     box.hidden = false; num.textContent = n;
+    const shell = $("#playerShell"); if (shell) shell.classList.add("counting");
     countdownTimer = setInterval(() => {
       n--; num.textContent = n;
       if (n <= 0) { cancelCountdown(); stepPlayer(1); }
@@ -1198,7 +1278,22 @@
       toast("Continue watching cleared");
     });
 
-    document.addEventListener("fullscreenchange", () => { updateFsBtn(); setTimeout(refitStage, 60); });
+    document.addEventListener("fullscreenchange", () => { updateFsBtn(); syncFsChrome(); setTimeout(refitStage, 60); });
+
+    // reveal the fullscreen controls on movement / tap, and when the video steals focus
+    const shellEl = $("#playerShell");
+    if (shellEl) {
+      shellEl.addEventListener("pointermove", () => { if (inFullscreen()) showFsControls(); });
+      shellEl.addEventListener("pointerdown", () => { if (inFullscreen()) showFsControls(); });
+    }
+    window.addEventListener("blur", () => { if (inFullscreen()) showFsControls(); });
+
+    // the Facebook explanation is clamped on phones — tap it to read the rest
+    const noteEl = document.querySelector(".embed-note");
+    if (noteEl) {
+      noteEl.title = "Tap to show the full note";
+      noteEl.addEventListener("click", () => noteEl.classList.toggle("expanded"));
+    }
     window.addEventListener("message", onPlayerMessage);
     window.addEventListener("beforeunload", () => {
       const it = currentList()[state.playerIndex];
@@ -1223,6 +1318,7 @@
         return;
       }
       if (typing) return;
+      if (inFullscreen()) showFsControls();
       if (e.key === "/") { e.preventDefault(); $("#searchInput").focus(); return; }
       if (!$("#playerModal").hidden) {
         if (e.key === "ArrowLeft") { e.preventDefault(); stepPlayer(-1); }
