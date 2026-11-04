@@ -40,6 +40,9 @@ function normalizeItemInput(data, parsed) {
     notes: String(data.notes || "").trim().slice(0, 2000),
     favorite: Boolean(data.favorite),
     watched: Boolean(data.watched),
+    progress: 0,
+    watch_seconds: 0,
+    last_opened_at: null,
     demo: false,
     metadata_status: wantsFetch ? "pending" : "manual",
     created_at: stamp,
@@ -151,7 +154,7 @@ export default async function handler(req) {
       if (method === "PATCH") {
         const body = await readBody(req);
         if (!body) return json({ error: "Invalid JSON" }, 400);
-        const allowed = ["title", "author", "thumbnail_url", "tags", "collection", "notes", "favorite", "watched", "media_type"];
+        const allowed = ["title", "author", "thumbnail_url", "tags", "collection", "notes", "favorite", "watched", "media_type", "progress", "watch_seconds", "last_opened_at"];
         const updates = {};
         for (const key of allowed) {
           if (!(key in body)) continue;
@@ -164,6 +167,19 @@ export default async function handler(req) {
           else if (key === "thumbnail_url") v = v ? String(v).slice(0, 2000) : null;
           else if (key === "media_type") {
             if (!["video", "short", "reel", "image", "post"].includes(v)) return json({ error: "Invalid media_type" }, 400);
+          } else if (key === "progress") {
+            const n = Number(v);
+            v = Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0;
+          } else if (key === "watch_seconds") {
+            const n = Number(v);
+            v = Number.isFinite(n) ? Math.min(600000, Math.max(0, Math.round(n))) : 0;
+          } else if (key === "last_opened_at") {
+            if (!v) { v = null; }
+            else {
+              const d = new Date(String(v));
+              if (!Number.isFinite(d.getTime())) return json({ error: "Invalid last_opened_at" }, 400);
+              v = d.toISOString();
+            }
           } else if (key === "favorite" || key === "watched") v = Boolean(v);
           updates[key] = v;
         }
