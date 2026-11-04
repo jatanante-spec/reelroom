@@ -2,7 +2,7 @@
 (() => {
   "use strict";
 
-  const REELROOM_VERSION = "v3";
+  const REELROOM_VERSION = "v4";
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -130,11 +130,12 @@
           .filter(Boolean).join(" ").toLowerCase().includes(q)
       );
     }
+    const stamp = (i) => String(i.created_at || "");
     const sorters = {
-      newest: (a, b) => b.created_at.localeCompare(a.created_at),
-      oldest: (a, b) => a.created_at.localeCompare(b.created_at),
-      title: (a, b) => (a.title || "").localeCompare(b.title || ""),
-      platform: (a, b) => a.platform.localeCompare(b.platform) || b.created_at.localeCompare(a.created_at),
+      newest: (a, b) => stamp(b).localeCompare(stamp(a)),
+      oldest: (a, b) => stamp(a).localeCompare(stamp(b)),
+      title: (a, b) => String(a.title || "").localeCompare(String(b.title || "")),
+      platform: (a, b) => String(a.platform || "").localeCompare(String(b.platform || "")) || stamp(b).localeCompare(stamp(a)),
     };
     list.sort(sorters[state.sort] || sorters.newest);
     return list;
@@ -203,8 +204,25 @@
     wrap.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { parts[+b.dataset.idx].clear(); render(); }));
   }
 
+  // Thumbnail resolution. Some platforms give us one directly; for others we can
+  // build a public preview-image URL from the link itself. Nothing is downloaded.
+  function thumbnailFor(item) {
+    const direct = safeUrl(item.thumbnail_url);
+    if (direct) return direct;
+    const canonical = safeUrl(item.canonical_url || item.url);
+    if (item.platform === "instagram") {
+      const m = canonical.match(/instagram\.com\/(p|reel|tv)\/([A-Za-z0-9_-]+)/);
+      if (m) return `https://www.instagram.com/${m[1]}/${m[2]}/media/?size=l`;
+    }
+    if (item.platform === "youtube") {
+      const id = item.external_id || (canonical.match(/[?&]v=([A-Za-z0-9_-]{6,})/) || [])[1];
+      if (id) return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+    }
+    return "";
+  }
+
   function thumbHtml(item) {
-    const thumb = safeUrl(item.thumbnail_url);
+    const thumb = thumbnailFor(item);
     const ph = `<div class="thumb-placeholder ph-${item.platform}"><span class="big">${PLATFORM_ICON[item.platform] || "▶"}</span><span>${esc(PLATFORM_LABEL[item.platform] || item.platform)}</span></div>`;
     const img = thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy" onerror="this.remove()">` : "";
     return `<div class="thumb">${ph}${img}
