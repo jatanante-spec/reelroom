@@ -167,6 +167,28 @@ export default async function handler(req) {
           } else if (key === "favorite" || key === "watched") v = Boolean(v);
           updates[key] = v;
         }
+        if ("backup_url" in body) {
+          const raw = String(body.backup_url || "").trim();
+          if (!raw) {
+            updates.backup_url = null;
+            updates.backup_canonical_url = null;
+            updates.backup_platform = null;
+            updates.backup_media_type = null;
+            updates.backup_embed_url = null;
+          } else {
+            let bp;
+            try {
+              bp = await parseUrl(raw);
+            } catch (err) {
+              return json({ error: "Backup link: " + (err && err.message ? err.message : "unsupported") }, 400);
+            }
+            updates.backup_url = raw.slice(0, 2000);
+            updates.backup_canonical_url = bp.canonical_url;
+            updates.backup_platform = bp.platform;
+            updates.backup_media_type = bp.media_type;
+            updates.backup_embed_url = bp.embed_url;
+          }
+        }
         const updated = await db.update(id, updates);
         if (!updated) return json({ error: "Not found" }, 404);
         return json(updated);
