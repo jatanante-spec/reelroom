@@ -2,7 +2,7 @@
 (() => {
   "use strict";
 
-  const REELROOM_VERSION = "v10";
+  const REELROOM_VERSION = "v15";
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -19,6 +19,8 @@
     pollTimer: null,
     fbUseAlt: false,
     useBackup: null,
+    playerView: "big",   // big | details — v13 opens big by default
+    moreOpen: false,
   };
 
   const PLATFORM_LABEL = { youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram", facebook: "Facebook" };
@@ -186,6 +188,7 @@
     wrap.querySelectorAll("[data-collection]").forEach((b) => b.addEventListener("click", () => {
       state.collection = state.collection === b.dataset.collection ? "" : b.dataset.collection;
       render();
+      closeSidebar();
     }));
   }
 
@@ -198,6 +201,7 @@
     wrap.querySelectorAll("[data-tag]").forEach((b) => b.addEventListener("click", () => {
       state.tag = state.tag === b.dataset.tag ? "" : b.dataset.tag;
       render();
+      closeSidebar();
     }));
   }
 
@@ -319,7 +323,24 @@
     state.useBackup = null;
     $("#playerModal").hidden = false;
     document.body.style.overflow = "hidden";
+    // v13: open the big view immediately. This is the CSS-based big layout
+    // (pseudo-fs), not the browser Fullscreen API, so it behaves the same on
+    // phones, Silk and desktop. F can still request true fullscreen on top.
+    state.playerView = "big";
+    state.moreOpen = false;
+    const shell = $("#playerShell");
+    if (shell) {
+      shell.classList.add("pseudo-fs");
+      shell.classList.remove("details-view", "more-open");
+    }
+    $("#playerModal").classList.remove("theatre");
     renderPlayer(list[idx]);
+    setTimeout(refitStage, 60);
+    focusBigDefault();
+    if (prefs.fsHintVersion !== 13) {
+      prefs.fsHintVersion = 13; savePrefs();
+      toast(tvEnabled() ? "Big view: ← → change video · More ⋯ for actions" : "Big view: tap for controls · More ⋯ for actions");
+    }
   }
 
   function facebookEmbeds(item) {
@@ -346,7 +367,7 @@
       badge.style.cssText = "font-size:11px;color:#9a9a9a;border:1px solid #3a3a3a;border-radius:6px;padding:2px 6px;flex-shrink:0;";
       top.appendChild(badge);
     }
-    try { console.log("ReelRoom " + REELROOM_VERSION + " (Instagram crop, own fullscreen controls)"); } catch {}
+    try { console.log("ReelRoom " + REELROOM_VERSION + " (installable app, Instagram crop, own fullscreen controls)"); } catch {}
   }
 
   function ensurePlayerActionButtons() {
@@ -519,6 +540,9 @@
     }
     const fp = $("#fsFullPostBtn");
     if (fp) { fp.textContent = prefs.igFullPost ? "Crop to video" : "Show full post"; fp.setAttribute("aria-pressed", String(!!prefs.igFullPost)); }
+    const row = $("#fsMoreIgRow"); if (row) row.hidden = !on;
+    const mfp = $("#fsMoreFullPostBtn");
+    if (mfp) { mfp.textContent = prefs.igFullPost ? "Crop to video" : "Show full post"; mfp.setAttribute("aria-pressed", String(!!prefs.igFullPost)); }
     if (!on) { const p = $("#cropAdjust"); if (p) { p.hidden = true; p.classList.remove("open"); } }
   }
 
@@ -600,23 +624,86 @@
     if (!shell) return;
     shell.classList.remove("fs-idle");
     clearTimeout(fsIdleTimer);
-    if (inFullscreen()) fsIdleTimer = setTimeout(hideFsControls, 3500);
+    // v13: on TV the controls stay visible — the remote is the primary input.
+    if (inFullscreen() && !tvEnabled() && !state.moreOpen) fsIdleTimer = setTimeout(hideFsControls, 3500);
   }
   function hideFsControls() {
     clearTimeout(fsIdleTimer); fsIdleTimer = null;
     const shell = $("#playerShell");
-    if (shell && inFullscreen()) shell.classList.add("fs-idle");
+    if (shell && inFullscreen() && !tvEnabled() && !state.moreOpen) shell.classList.add("fs-idle");
   }
   function syncFsChrome() {
     const shell = $("#playerShell");
     if (!shell) return;
-    if (inFullscreen()) { ensureFsChrome(); showFsControls(); }
+    if (inFullscreen() && state.playerView === "big") { ensureFsChrome(); showFsControls(); syncFsMore(); }
     else {
       clearTimeout(fsIdleTimer); fsIdleTimer = null;
-      shell.classList.remove("fs-idle", "counting");
+      shell.classList.remove("fs-idle", "counting", "more-open");
+      closeFsMore();
       const p = $("#cropAdjust"); if (p) { p.hidden = true; p.classList.remove("open"); }
       const ab = $("#fsAdjustBtn"); if (ab) ab.setAttribute("aria-pressed", "false");
     }
+    updateSoundUI();
+  }
+
+  // ---- v13 More panel: occasional actions without cluttering the big view ----
+  function openFsMore() {
+    if (!inFullscreen() || state.playerView !== "big") return;
+    const p = $("#fsMorePanel"); if (!p) return;
+    state.moreOpen = true;
+    p.hidden = false; p.classList.add("open");
+    const shell = $("#playerShell"); if (shell) shell.classList.add("more-open");
+    const b = $("#fsMoreBtn"); if (b) b.setAttribute("aria-pressed", "true");
+    clearTimeout(fsIdleTimer);
+    syncFsMore();
+    const first = $("#fsMoreFavBtn"); if (first) first.focus();
+  }
+  function closeFsMore() {
+    state.moreOpen = false;
+    const p = $("#fsMorePanel"); if (p) { p.hidden = true; p.classList.remove("open"); }
+    const shell = $("#playerShell"); if (shell) shell.classList.remove("more-open");
+    const b = $("#fsMoreBtn"); if (b) b.setAttribute("aria-pressed", "false");
+  }
+  function toggleFsMore() { if (state.moreOpen) closeFsMore(); else openFsMore(); }
+  function syncFsMore() {
+    const item = currentList()[state.playerIndex];
+    if (!item) return;
+    const sources = activeSources(item);
+    const hasBackup = sources.length > 1;
+    const useBackup = hasBackup && state.useBackup !== false;
+    const active = useBackup ? sources[1] : sources[0];
+    const fav = $("#fsFavBtn"); if (fav) { fav.textContent = item.favorite ? "★" : "☆"; fav.title = item.favorite ? "Favorited" : "Favorite"; }
+    const mf = $("#fsMoreFavBtn"); if (mf) mf.textContent = item.favorite ? "★ Favorited" : "☆ Favorite";
+    const mw = $("#fsMoreWatchedBtn"); if (mw) mw.textContent = item.watched ? "✓ Watched" : "Mark watched";
+    const mo = $("#fsMoreOriginalBtn"); if (mo) mo.href = active.url || safeUrl(item.canonical_url || item.url);
+    const mb = $("#fsMoreBackupBtn"); if (mb) mb.textContent = hasBackup ? "Change backup link" : "Add backup link";
+    const ap = $("#fsAutoplayBtn"); if (ap) { ap.textContent = prefs.autoplay ? "On" : "Off"; ap.setAttribute("aria-pressed", String(!!prefs.autoplay)); }
+    const rem = $("#fsSoundRememberBtn"); if (rem) { rem.textContent = soundRememberOn() ? "On" : "Off"; rem.setAttribute("aria-pressed", String(soundRememberOn())); }
+    updateSoundUI();
+    const adv = $("#fsAdvanceSelect"); if (adv) adv.value = String(prefs.advanceSecs);
+    const igRow = $("#fsMoreIgRow"); if (igRow) igRow.hidden = !state.igActive;
+    const fp = $("#fsMoreFullPostBtn"); if (fp) { fp.textContent = prefs.igFullPost ? "Crop to video" : "Show full post"; fp.setAttribute("aria-pressed", String(!!prefs.igFullPost)); }
+    const adj = $("#fsMoreAdjustBtn"); if (adj) { const open = !$("#cropAdjust").hidden; adj.setAttribute("aria-pressed", String(open)); }
+    const note = $("#fsMoreNote"); const mainNote = document.querySelector(".embed-note");
+    if (note && mainNote) note.textContent = mainNote.textContent;
+  }
+  function fsFocusables() {
+    if (state.moreOpen) {
+      const p = $("#fsMorePanel");
+      return p ? Array.from(p.querySelectorAll("button, select, a")).filter(isVisible) : [];
+    }
+    if (state.playerView === "big" && inFullscreen()) {
+      return ["#fsExitBtn", "#fsPrevBtn", "#fsNextBtn", "#fsSoundBtn", "#soundHelperBtn", "#fsFavBtn", "#fsMoreBtn", "#fsFullPostBtn", "#fsAdjustBtn", "#fsCancelBtn"]
+        .map((s) => $(s)).filter(isVisible);
+    }
+    return [];
+  }
+  function moveFsFocus(dir) {
+    const list = fsFocusables();
+    if (!list.length) return;
+    let i = list.indexOf(document.activeElement);
+    i = (i + dir + list.length) % list.length;
+    list[i].focus();
   }
 
   function stageClass(src, embed) {
@@ -640,6 +727,142 @@
     renderPlayer(item);
   }
 
+  // ================= v15: sound helper =================
+  // Browsers/platforms often start embeds muted so autoplay is reliable. ReelRoom
+  // makes that state obvious, offers one-tap unmute where the platform allows it,
+  // and remembers the choice for this browser session.
+  const SOUND_SESSION_KEY = "reelroom.sound.session.v1";
+  const sound = { status: "muted", fallback: false, platform: "", sessionOn: false, confirmTimer: null };
+  function loadSoundSession() { try { return sessionStorage.getItem(SOUND_SESSION_KEY) === "on"; } catch { return false; } }
+  function saveSoundSession(on) { try { if (on) sessionStorage.setItem(SOUND_SESSION_KEY, "on"); else sessionStorage.removeItem(SOUND_SESSION_KEY); } catch {} }
+  sound.sessionOn = loadSoundSession();
+  function soundRememberOn() { return prefs.soundRemember !== false; }
+  function canHostUnmute(platform) { return platform === "youtube" || platform === "tiktok"; }
+  function shouldStartMuted(platform) {
+    if (!soundRememberOn() || !sound.sessionOn) return true;
+    return !canHostUnmute(platform);
+  }
+  function rememberSound() {
+    if (!soundRememberOn()) return;
+    sound.sessionOn = true; saveSoundSession(true);
+  }
+  function applySoundParams(platform, url) {
+    if (!url) return url;
+    try {
+      const u = new URL(url);
+      const host = u.hostname.replace(/^www\./, "");
+      const muted = shouldStartMuted(platform);
+      if (/youtube(-nocookie)?\.com$/.test(host)) u.searchParams.set("mute", muted ? "1" : "0");
+      else if (host === "tiktok.com" && u.pathname.indexOf("/player/") === 0) u.searchParams.set("muted", muted ? "1" : "0");
+      else if (host === "facebook.com" && u.pathname.indexOf("/plugins/video.php") === 0) u.searchParams.set("mute", muted ? "1" : "0");
+      return u.href;
+    } catch { return url; }
+  }
+  function playerFrame() { return $("#playerStage iframe"); }
+  function ytCommand(func, args) {
+    const f = playerFrame(); if (!f || !f.contentWindow) return;
+    const msg = JSON.stringify({ event: "command", func: func, args: args || [], id: "reelroom", channel: "widget" });
+    for (const origin of ["https://www.youtube-nocookie.com", "https://www.youtube.com"]) {
+      try { f.contentWindow.postMessage(msg, origin); } catch {}
+    }
+  }
+  function tiktokCommand(type, value) {
+    const f = playerFrame(); if (!f || !f.contentWindow) return;
+    try { f.contentWindow.postMessage({ "x-tiktok-player": true, type: type, value: value }, "https://www.tiktok.com"); } catch {}
+  }
+  function sendUnmute(platform) {
+    if (platform === "youtube") { ytCommand("unMute"); ytCommand("playVideo"); }
+    else if (platform === "tiktok") { tiktokCommand("unMute"); }
+  }
+  function setSoundConfirmed(on) {
+    clearTimeout(sound.confirmTimer);
+    sound.fallback = false;
+    sound.status = on ? "on" : "muted";
+    if (on) rememberSound();
+    updateSoundUI();
+  }
+  function initSoundFor(platform) {
+    clearTimeout(sound.confirmTimer);
+    sound.platform = platform || "";
+    sound.fallback = false;
+    if (platform === "instagram") sound.status = "unknown";
+    else sound.status = shouldStartMuted(platform) ? "muted" : "trying";
+    updateSoundUI();
+    if (!shouldStartMuted(platform) && canHostUnmute(platform)) {
+      setTimeout(() => { if (state.activePlatform === platform) sendUnmute(platform); }, 900);
+    }
+  }
+  function requestSound() {
+    const platform = state.activePlatform || sound.platform;
+    if (!platform) return;
+    showFsControls();
+    if (canHostUnmute(platform)) {
+      sound.status = "trying"; sound.fallback = false;
+      sendUnmute(platform);
+      rememberSound();
+      updateSoundUI();
+      clearTimeout(sound.confirmTimer);
+      sound.confirmTimer = setTimeout(() => {
+        if (sound.status === "trying") { sound.status = "fallback"; sound.fallback = true; updateSoundUI(); }
+      }, 1800);
+    } else {
+      sound.status = "fallback"; sound.fallback = true;
+      updateSoundUI();
+      toast(platform === "instagram"
+        ? "Tap the speaker inside the Instagram video. If it is hidden, use Show full post."
+        : "Tap the speaker inside the Facebook video to enable sound.");
+    }
+  }
+  function toggleSoundRemember() {
+    prefs.soundRemember = !soundRememberOn(); savePrefs();
+    if (!prefs.soundRemember) { sound.sessionOn = false; saveSoundSession(false); }
+    updateSoundUI(); syncFsMore();
+    toast(prefs.soundRemember ? "Will remember sound for this session" : "Sound memory off");
+  }
+  function updateSoundUI() {
+    const modal = $("#playerModal");
+    const open = modal && !modal.hidden;
+    const big = open && inFullscreen() && state.playerView === "big";
+    const helper = $("#soundHelperBtn"), helperText = $("#soundHelperText"), helperIcon = $("#soundHelperIcon");
+    const hint = $("#soundHint");
+    const fsBtn = $("#fsSoundBtn"), actionBtn = $("#soundActionBtn");
+    const on = sound.status === "on";
+    const hostable = canHostUnmute(sound.platform);
+    const label = on ? "Sound on"
+      : (sound.fallback ? (hostable ? "Try sound again" : "Tap for sound")
+      : (sound.status === "trying" ? "If silent, tap for sound" : "Tap for sound"));
+    const icon = on ? "🔊" : "🔇";
+    if (helper) {
+      // For Instagram/Facebook the big button cannot unmute, so once we know that,
+      // show the honest hint instead of a button that would only repeat the hint.
+      helper.hidden = !(big && !on && !state.moreOpen && !(sound.fallback && !hostable));
+      if (helperText) helperText.textContent = label;
+      if (helperIcon) helperIcon.textContent = icon;
+      helper.setAttribute("aria-pressed", String(on));
+    }
+    if (hint) {
+      hint.hidden = !(big && sound.fallback && !state.moreOpen);
+      hint.textContent = sound.fallback
+        ? (hostable
+            ? "ReelRoom asked the player to unmute. If it is still silent, tap the speaker inside the video."
+            : (sound.platform === "instagram"
+                ? "Instagram controls its own sound. Tap the speaker inside the video, or use Show full post."
+                : "Facebook controls its own sound. Tap the speaker inside the video."))
+        : "";
+    }
+    if (fsBtn) {
+      fsBtn.textContent = icon + (on ? " Sound on" : " Sound");
+      fsBtn.setAttribute("aria-pressed", String(on));
+      fsBtn.title = on ? "Sound on (S)" : "Enable sound (S)";
+    }
+    if (actionBtn) {
+      actionBtn.textContent = icon + (on ? " Sound on" : " Enable sound");
+      actionBtn.setAttribute("aria-pressed", String(on));
+    }
+    const rem = $("#fsSoundRememberBtn");
+    if (rem) { rem.textContent = soundRememberOn() ? "On" : "Off"; rem.setAttribute("aria-pressed", String(soundRememberOn())); }
+  }
+
   function embedWithApi(platform, item, url) {
     if (!url) return url;
     try {
@@ -651,8 +874,8 @@
         const prog = Number(item.progress) || 0;
         if (pos > 5 && prog > 0.02 && prog < 0.92) u.searchParams.set("start", String(Math.floor(pos)));
       }
-      return u.href;
-    } catch { return url; }
+      return applySoundParams(platform, u.href);
+    } catch { return applySoundParams(platform, url); }
   }
 
   async function markOpened(item) {
@@ -737,6 +960,7 @@
     // playback reporting + continue-watching tracking
     resetBridge(active.platform);
     state.activePlatform = active.platform;
+    initSoundFor(active.platform);
     const frame = stage.querySelector("iframe");
     if (frame && active.platform === "youtube") {
       frame.addEventListener("load", () => {
@@ -763,10 +987,12 @@
         }
       }, 12000);
     }
-    $("#playerModal").classList.toggle("theatre", !!prefs.theatre);
+    $("#playerModal").classList.toggle("theatre", state.playerView === "details" && !!prefs.theatre);
     const titleEl = $("#playerTitle");
     if (titleEl) titleEl.title = displayTitle(item);
     updateFsBtn();
+    syncFsMore();
+    updateSoundUI();
 
     const note = document.querySelector(".embed-note");
     if (note) {
@@ -790,13 +1016,20 @@
     stopTracking();
     clearTimeout(state.reportWatchdog);
     if (item) saveProgress(item, true).then(() => renderContinue());
+    closeFsMore();
     if (inFullscreen()) exitFullscreen();
+    const shell = $("#playerShell");
+    if (shell) shell.classList.remove("pseudo-fs", "details-view", "more-open", "fs-idle");
+    state.playerView = "big";
     $("#playerModal").hidden = true;
     $("#playerStage").innerHTML = "";
     document.body.style.overflow = "";
     state.playerIndex = -1;
     state.igActive = false;
     resetBridge("");
+    clearTimeout(sound.confirmTimer);
+    sound.status = "muted"; sound.fallback = false; sound.platform = "";
+    updateSoundUI();
     const back = state.returnFocusId && document.querySelector(`#grid .card[data-id="${state.returnFocusId}"]`);
     if (back) back.focus();
   }
@@ -996,6 +1229,7 @@
   const PREFS_KEY = "reelroom.prefs.v1";
   function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; } }
   const prefs = Object.assign({ tvMode: null, theatre: false, autoplay: true, advanceSecs: 0, continueClearedAt: null,
+    soundRemember: true,
     igFullPost: false, igAdjust: { reel: { zoom: 1, dy: 0 }, post: { zoom: 1, dy: 0 } } }, loadPrefs());
   if (!prefs.igAdjust || !prefs.igAdjust.reel) prefs.igAdjust = { reel: { zoom: 1, dy: 0 }, post: { zoom: 1, dy: 0 } };
   function savePrefs() { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {} }
@@ -1008,6 +1242,12 @@
     document.body.classList.toggle("tv-mode", tvEnabled());
     const b = $("#tvModeBtn");
     if (b) { b.setAttribute("aria-pressed", String(tvEnabled())); b.title = tvEnabled() ? "TV mode is on" : "TV / remote mode"; }
+    if (tvEnabled()) closeSidebar(); // TV mode hides the drawer; do not leave it locked open
+    if (!$("#playerModal").hidden) {
+      syncFsChrome();
+      setTimeout(refitStage, 60);
+      if (state.playerView === "big") focusBigDefault();
+    }
   }
   function toggleTvMode() {
     prefs.tvMode = !tvEnabled(); savePrefs(); applyTvMode(); render();
@@ -1017,37 +1257,86 @@
 
   // ---- fullscreen / theatre ----
   function pseudoFs() { const s = $("#playerShell"); return !!s && s.classList.contains("pseudo-fs"); }
-  function inFullscreen() { return !!document.fullscreenElement || pseudoFs(); }
+  function trueFullscreen() { return !!document.fullscreenElement; }
+  function inFullscreen() { return trueFullscreen() || pseudoFs(); }
+  function isVisible(el) {
+    return !!el && !el.hidden && el.style.display !== "none" &&
+      (el.offsetParent !== null || (el.getClientRects && el.getClientRects().length > 0));
+  }
+  function focusBigDefault() {
+    if ($("#playerModal").hidden || state.playerView !== "big") return;
+    const target = $("#fsNextBtn") || $("#fsMoreBtn");
+    if (isVisible(target)) target.focus();
+  }
   function updateFsBtn() {
     const b = $("#fullscreenBtn");
     if (b) {
-      const on = inFullscreen();
-      b.title = on ? "Exit fullscreen (F / Esc)" : "Fullscreen (F)";
-      b.setAttribute("aria-label", on ? "Exit fullscreen" : "Fullscreen");
+      const on = trueFullscreen();
+      b.title = on ? "Exit true fullscreen (F)" : "Fullscreen (F)";
+      b.setAttribute("aria-label", on ? "Exit true fullscreen" : "Fullscreen");
       b.setAttribute("aria-pressed", String(on));
     }
     const t = $("#theatreBtn");
-    if (t) t.setAttribute("aria-pressed", String(prefs.theatre));
+    if (t) {
+      const details = state.playerView === "details";
+      t.setAttribute("aria-pressed", String(details));
+      t.title = details ? "Big view (T)" : "Details view (T)";
+    }
   }
   function refitStage() {
     const it = currentList()[state.playerIndex];
     if (it && state.fbAutoFit) { lastFitKey = ""; fitFacebook(it); }
     if (state.igActive) { layoutInstagram(); syncIgButtons(); }
   }
+  // v13: big view is the default. Details is the old popup, kept on T.
+  function enterBigView() {
+    const shell = $("#playerShell"); if (!shell) return;
+    state.playerView = "big";
+    closeFsMore();
+    shell.classList.add("pseudo-fs");
+    shell.classList.remove("details-view");
+    $("#playerModal").classList.remove("theatre");
+    updateFsBtn(); syncFsChrome(); setTimeout(refitStage, 60);
+    focusBigDefault();
+  }
+  function enterDetailsView() {
+    const shell = $("#playerShell"); if (!shell) return;
+    state.playerView = "details";
+    closeFsMore();
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    shell.classList.remove("pseudo-fs", "more-open", "fs-idle");
+    shell.classList.add("details-view");
+    $("#playerModal").classList.toggle("theatre", !!prefs.theatre);
+    updateFsBtn(); syncFsChrome(); setTimeout(refitStage, 60);
+    const c = $("#closePlayerBtn"); if (c) c.focus();
+  }
+  function toggleDetailsView() {
+    if (state.playerView === "details") enterBigView(); else enterDetailsView();
+  }
   async function toggleFullscreen() {
     const shell = $("#playerShell");
     if (!shell) return;
-    if (inFullscreen()) return exitFullscreen();
+    if (state.playerView === "details") enterBigView();
+    if (trueFullscreen()) {
+      // Leave true browser fullscreen but stay in the big default view.
+      if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+      shell.classList.add("pseudo-fs");
+      state.playerView = "big";
+      updateFsBtn(); syncFsChrome(); setTimeout(refitStage, 60);
+      return;
+    }
     try {
       if (!shell.requestFullscreen) throw new Error("unsupported");
       await shell.requestFullscreen();
     } catch {
       shell.classList.add("pseudo-fs");
     }
+    state.playerView = "big";
+    shell.classList.add("pseudo-fs");
     updateFsBtn(); syncFsChrome(); setTimeout(refitStage, 60);
-    if (prefs.fsHintVersion !== 10) {
-      prefs.fsHintVersion = 10; prefs.fsHintShown = true; savePrefs();
-      toast("Tap the video for controls · ✕ top-left to exit");
+    if (prefs.fsHintVersion !== 13) {
+      prefs.fsHintVersion = 13; prefs.fsHintShown = true; savePrefs();
+      toast("Tap the video for controls · ✕ top-left to close");
     }
   }
   function exitFullscreen() {
@@ -1055,12 +1344,6 @@
     if (shell) shell.classList.remove("pseudo-fs");
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
     updateFsBtn(); syncFsChrome(); setTimeout(refitStage, 60);
-  }
-  function toggleTheatre() {
-    prefs.theatre = !prefs.theatre; savePrefs();
-    $("#playerModal").classList.toggle("theatre", prefs.theatre);
-    updateFsBtn(); setTimeout(refitStage, 60);
-    toast(prefs.theatre ? "Theatre mode on" : "Theatre mode off");
   }
 
   // ---- remote / keyboard grid navigation ----
@@ -1116,6 +1399,8 @@
       const info = data.info || {};
       if (typeof info.currentTime === "number") bridge.currentTime = info.currentTime;
       if (typeof info.duration === "number" && info.duration > 0) bridge.duration = info.duration;
+      if (typeof info.muted === "boolean") setSoundConfirmed(!info.muted);
+      else if (typeof info.volume === "number") setSoundConfirmed(info.volume > 0);
       const st = data.event === "onStateChange" ? data.info : info.playerState;
       if (st === 0) handleEnded();
       return;
@@ -1127,6 +1412,7 @@
         if (typeof d.value.currentTime === "number") bridge.currentTime = d.value.currentTime;
         if (typeof d.value.duration === "number" && d.value.duration > 0) bridge.duration = d.value.duration;
       }
+      if (d.type === "onMute") setSoundConfirmed(d.value === false);
       if (d.type === "onStateChange" && Number(d.value) === 0) handleEnded();
     }
   }
@@ -1216,6 +1502,9 @@
     const ab = $("#autoplayBtn");
     if (ab) { ab.textContent = "Autoplay: " + (prefs.autoplay ? "on" : "off"); ab.setAttribute("aria-pressed", String(prefs.autoplay)); ab.classList.toggle("btn-primary", prefs.autoplay); }
     const sel = $("#advanceSelect"); if (sel) sel.value = String(prefs.advanceSecs);
+    const fab = $("#fsAutoplayBtn");
+    if (fab) { fab.textContent = prefs.autoplay ? "On" : "Off"; fab.setAttribute("aria-pressed", String(!!prefs.autoplay)); }
+    const fsel = $("#fsAdvanceSelect"); if (fsel) fsel.value = String(prefs.advanceSecs);
 
     if (!prefs.autoplay) setUpnextStatus("Autoplay is off — press › for the next one.");
     else if (reportsProgress(item.platform)) setUpnextStatus("Advances when the video actually ends.");
@@ -1249,20 +1538,206 @@
     });
   }
 
+  // ---------- v12: installable app ----------
+  // Deliberately NO service worker in this version: caching the app shell would
+  // risk serving stale builds, and updates ship often. Modern Chrome installs
+  // from the manifest alone. Offline support can be added later if wanted.
+  let installPrompt = null;
+
+  function isStandalone() {
+    try {
+      return window.matchMedia("(display-mode: standalone)").matches ||
+             window.matchMedia("(display-mode: fullscreen)").matches ||
+             window.matchMedia("(display-mode: minimal-ui)").matches ||
+             window.navigator.standalone === true;
+    } catch { return false; }
+  }
+
+  function isIos() {
+    const ua = navigator.userAgent || "";
+    // iPadOS 13+ reports as Macintosh, so check touch points too.
+    return /iPad|iPhone|iPod/.test(ua) ||
+           (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1);
+  }
+
+  function setupInstall() {
+    const standalone = isStandalone();
+    document.body.classList.toggle("standalone", standalone);
+    const btn = $("#installAppBtn");
+    if (!btn) return;
+    if (standalone) { btn.hidden = true; return; }
+
+    // Chromium tells us when a real install is available.
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault();
+      installPrompt = e;
+      btn.textContent = "Install ReelRoom";
+      btn.hidden = false;
+    });
+    window.addEventListener("appinstalled", () => {
+      installPrompt = null;
+      btn.hidden = true;
+      document.body.classList.add("standalone");
+      toast("ReelRoom installed \u2014 find it on your home screen");
+    });
+
+    // iOS has no install event; offer the manual steps instead.
+    if (isIos()) {
+      btn.textContent = "Add to Home Screen";
+      btn.hidden = false;
+    }
+    // Other browsers: stay hidden rather than offer a button that cannot work.
+  }
+
+  function openInstallHelp() {
+    const ios = isIos();
+    // Fire TV / Silk identifies as Android but cannot install web apps, so it
+    // must not be shown the Android steps. Route TVs to the generic panel.
+    let tv = false;
+    try { tv = looksLikeTV(); } catch {}
+    const android = /Android/i.test(navigator.userAgent || "") && !tv;
+    $("#installIos").hidden = !ios;
+    $("#installAndroid").hidden = ios || !android;
+    $("#installOther").hidden = ios || android;
+    $("#installModal").hidden = false;
+  }
+
+  async function doInstall() {
+    if (installPrompt) {
+      const evt = installPrompt;
+      installPrompt = null;
+      try {
+        evt.prompt();
+        const choice = await evt.userChoice;
+        if (choice && choice.outcome === "accepted") {
+          $("#installAppBtn").hidden = true;
+        } else {
+          // Dismissed: keep the menu entry so it can be retried from the menu.
+          openInstallHelp();
+        }
+      } catch { openInstallHelp(); }
+      return;
+    }
+    openInstallHelp();
+  }
+
+  // Home-screen long-press shortcuts (manifest "shortcuts").
+  function applyLaunchShortcut() {
+    let params;
+    try { params = new URLSearchParams(window.location.search); } catch { return; }
+    const add = params.get("add");
+    const view = params.get("view");
+    if (!add && !view) return;
+    if (view === "favorites" || view === "unwatched" || view === "all") {
+      state.view = view;
+      $$(".side-link[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+      render();
+    }
+    if (add === "1") { $("#addModal").hidden = false; }
+    // Clean the URL so a refresh does not re-trigger the shortcut.
+    try { window.history.replaceState({}, "", window.location.pathname); } catch {}
+  }
+
+  // ---- v14 mobile sidebar drawer ----
+  function sidebarOpen() { const s = $("#sidebar"); return !!s && s.classList.contains("open"); }
+  function isMobileLayout() {
+    try { return window.matchMedia("(max-width: 900px)").matches; }
+    catch { return window.innerWidth <= 900; }
+  }
+  function setSidebar(open) {
+    const s = $("#sidebar"), scrim = $("#sidebarScrim"), btn = $("#menuBtn");
+    if (!s) return;
+    if (open && !isMobileLayout()) open = false; // desktop sidebar is permanent
+    s.classList.toggle("open", open);
+    document.body.classList.toggle("sidebar-open", open);
+    if (btn) btn.setAttribute("aria-expanded", String(open));
+    if (scrim) scrim.setAttribute("aria-hidden", String(!open));
+    if (open) {
+      const first = s.querySelector(".side-link, .tag-pill, button");
+      if (first) first.focus();
+    } else if (isMobileLayout() && btn && isVisible(btn)) {
+      btn.focus(); // return focus to the hamburger after any dismissal
+    }
+  }
+  function closeSidebar() { setSidebar(false); }
+  function sidebarFocusables() {
+    const s = $("#sidebar");
+    return s ? Array.from(s.querySelectorAll("button:not([disabled]), a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])")).filter(isVisible) : [];
+  }
+  function trapSidebarTab(e) {
+    if (!sidebarOpen() || e.key !== "Tab") return;
+    const list = sidebarFocusables();
+    if (!list.length) return;
+    const first = list[0], last = list[list.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+  function sidebarArrowNav(e) {
+    if (!sidebarOpen()) return;
+    if (["ArrowDown", "ArrowUp", "Home", "End"].indexOf(e.key) < 0) return;
+    const list = sidebarFocusables().filter((el) => el.tagName === "BUTTON" || el.tagName === "A");
+    if (!list.length) return;
+    let i = list.indexOf(document.activeElement);
+    if (e.key === "ArrowDown") i = (i + 1) % list.length;
+    else if (e.key === "ArrowUp") i = (i - 1 + list.length) % list.length;
+    else if (e.key === "Home") i = 0;
+    else i = list.length - 1;
+    e.preventDefault(); list[i].focus();
+  }
+
+  function applyAutoplayToggle() {
+    prefs.autoplay = !prefs.autoplay; savePrefs();
+    if (!prefs.autoplay) cancelCountdown();
+    const it = currentList()[state.playerIndex];
+    if (it) renderUpNext({ ...it, platform: state.activePlatform || it.platform });
+    syncFsMore();
+  }
+  function applyAdvanceSecs(value) {
+    prefs.advanceSecs = Number(value) || 0; savePrefs();
+    cancelCountdown();
+    const it = currentList()[state.playerIndex];
+    if (it) {
+      const plat = state.activePlatform || it.platform;
+      renderUpNext({ ...it, platform: plat });
+      cancelCountdown();
+      if (prefs.autoplay && prefs.advanceSecs > 0 && !reportsProgress(plat)) startCountdown(prefs.advanceSecs);
+    }
+    syncFsMore();
+  }
+
   function bind() {
     $("#addBtn").addEventListener("click", () => { $("#addModal").hidden = false; $("#singleUrl").focus(); });
     $("#emptyAddBtn").addEventListener("click", () => { $("#addModal").hidden = false; $("#singleUrl").focus(); });
     $$("[data-close]").forEach((b) => b.addEventListener("click", () => { $("#" + b.dataset.close).hidden = true; }));
     $$(".modal-backdrop").forEach((m) => m.addEventListener("click", (e) => { if (e.target === m) { m.hidden = true; if (m.id === "playerModal") closePlayer(); } }));
 
-    $("#menuBtn").addEventListener("click", () => $("#sidebar").classList.toggle("open"));
-    $("#brandLink").addEventListener("click", (e) => { e.preventDefault(); state.view = "all"; state.platform = ""; state.collection = ""; state.tag = ""; state.search = ""; $("#searchInput").value = ""; render(); });
+    $("#menuBtn").addEventListener("click", (e) => { e.stopPropagation(); setSidebar(!sidebarOpen()); });
+    const sidebarScrim = $("#sidebarScrim");
+    if (sidebarScrim) sidebarScrim.addEventListener("click", closeSidebar);
+    const sidebarCloseBtn = $("#sidebarCloseBtn");
+    if (sidebarCloseBtn) sidebarCloseBtn.addEventListener("click", closeSidebar);
+    document.addEventListener("click", (e) => {
+      if (sidebarOpen() && !$("#sidebar").contains(e.target) && !$("#menuBtn").contains(e.target)) closeSidebar();
+    });
+    const sidebarEl = $("#sidebar");
+    if (sidebarEl) {
+      sidebarEl.addEventListener("keydown", sidebarArrowNav);
+      let swipeX = null;
+      sidebarEl.addEventListener("touchstart", (e) => { swipeX = e.touches[0].clientX; }, { passive: true });
+      sidebarEl.addEventListener("touchend", (e) => {
+        if (swipeX === null) return;
+        const dx = e.changedTouches[0].clientX - swipeX;
+        swipeX = null;
+        if (dx < -60) closeSidebar(); // swipe left to dismiss
+      }, { passive: true });
+    }
+    $("#brandLink").addEventListener("click", (e) => { e.preventDefault(); state.view = "all"; state.platform = ""; state.collection = ""; state.tag = ""; state.search = ""; $("#searchInput").value = ""; render(); closeSidebar(); });
 
     $("#searchInput").addEventListener("input", debounce((e) => { state.search = e.target.value.trim(); render(); }, 180));
     $("#sortSelect").addEventListener("change", (e) => { state.sort = e.target.value; render(); });
 
-    $$(".side-link[data-view]").forEach((b) => b.addEventListener("click", () => { state.view = b.dataset.view; state.platform = ""; state.collection = ""; state.tag = ""; render(); $("#sidebar").classList.remove("open"); }));
-    $$(".platform-link").forEach((b) => b.addEventListener("click", () => { state.platform = state.platform === b.dataset.platform ? "" : b.dataset.platform; state.view = "all"; render(); $("#sidebar").classList.remove("open"); }));
+    $$(".side-link[data-view]").forEach((b) => b.addEventListener("click", () => { state.view = b.dataset.view; state.platform = ""; state.collection = ""; state.tag = ""; render(); closeSidebar(); }));
+    $$(".platform-link").forEach((b) => b.addEventListener("click", () => { state.platform = state.platform === b.dataset.platform ? "" : b.dataset.platform; state.view = "all"; render(); closeSidebar(); }));
     $$("#platformChips .chip").forEach((c) => c.addEventListener("click", () => { state.platform = c.dataset.platform; render(); }));
 
     $("#moreBtn").addEventListener("click", (e) => { e.stopPropagation(); $("#moreMenu").hidden = !$("#moreMenu").hidden; });
@@ -1273,6 +1748,7 @@
       if (act === "import") $("#importFile").click();
       if (act === "clear-demo") clearDemo();
       if (act === "logout") doLogout();
+      if (act === "install") doInstall();
     });
     $("#clearDemoBtn").addEventListener("click", clearDemo);
     $("#importFile").addEventListener("change", (e) => { if (e.target.files[0]) importFile(e.target.files[0]); e.target.value = ""; });
@@ -1335,26 +1811,23 @@
     const fsBtn = $("#fullscreenBtn");
     if (fsBtn) fsBtn.addEventListener("click", toggleFullscreen);
     const thBtn = $("#theatreBtn");
-    if (thBtn) thBtn.addEventListener("click", toggleTheatre);
+    if (thBtn) thBtn.addEventListener("click", toggleDetailsView);
     const apBtn = $("#autoplayBtn");
-    if (apBtn) apBtn.addEventListener("click", () => {
-      prefs.autoplay = !prefs.autoplay; savePrefs();
-      if (!prefs.autoplay) cancelCountdown();
-      const it = currentList()[state.playerIndex];
-      if (it) renderUpNext({ ...it, platform: state.activePlatform || it.platform });
-    });
+    if (apBtn) apBtn.addEventListener("click", applyAutoplayToggle);
+    const fsApBtn = $("#fsAutoplayBtn");
+    if (fsApBtn) fsApBtn.addEventListener("click", (e) => { e.stopPropagation(); applyAutoplayToggle(); });
+    const fsSoundBtn = $("#fsSoundBtn");
+    if (fsSoundBtn) fsSoundBtn.addEventListener("click", (e) => { e.stopPropagation(); showFsControls(); requestSound(); });
+    const soundHelperBtn = $("#soundHelperBtn");
+    if (soundHelperBtn) soundHelperBtn.addEventListener("click", (e) => { e.stopPropagation(); requestSound(); });
+    const soundActionBtn = $("#soundActionBtn");
+    if (soundActionBtn) soundActionBtn.addEventListener("click", (e) => { e.stopPropagation(); requestSound(); });
+    const fsSoundRememberBtn = $("#fsSoundRememberBtn");
+    if (fsSoundRememberBtn) fsSoundRememberBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleSoundRemember(); });
     const advSel = $("#advanceSelect");
-    if (advSel) advSel.addEventListener("change", (e) => {
-      prefs.advanceSecs = Number(e.target.value) || 0; savePrefs();
-      cancelCountdown();
-      const it = currentList()[state.playerIndex];
-      if (it) {
-        const plat = state.activePlatform || it.platform;
-        renderUpNext({ ...it, platform: plat });
-        cancelCountdown();
-        if (prefs.autoplay && prefs.advanceSecs > 0 && !reportsProgress(plat)) startCountdown(prefs.advanceSecs);
-      }
-    });
+    if (advSel) advSel.addEventListener("change", (e) => applyAdvanceSecs(e.target.value));
+    const fsAdvSel = $("#fsAdvanceSelect");
+    if (fsAdvSel) fsAdvSel.addEventListener("change", (e) => { e.stopPropagation(); applyAdvanceSecs(e.target.value); });
     const cancelAp = $("#cancelAutoplayBtn");
     if (cancelAp) cancelAp.addEventListener("click", () => { cancelCountdown(); setUpnextStatus("Auto-advance cancelled."); });
     const clearCont = $("#clearContinueBtn");
@@ -1365,13 +1838,13 @@
 
     // ---- v10 fullscreen bar + Instagram crop controls ----
     const on = (id, fn) => { const b = $(id); if (b) b.addEventListener("click", (e) => { e.stopPropagation(); showFsControls(); fn(); }); };
-    on("#fsExitBtn", exitFullscreen);
+    on("#fsExitBtn", closePlayer);
     on("#fsPrevBtn", () => stepPlayer(-1));
     on("#fsNextBtn", () => stepPlayer(1));
     on("#fsCancelBtn", () => { cancelCountdown(); setUpnextStatus("Auto-advance cancelled."); });
     on("#fsFullPostBtn", () => {
       prefs.igFullPost = !prefs.igFullPost; savePrefs();
-      layoutInstagram(); syncIgButtons();
+      layoutInstagram(); syncIgButtons(); syncFsMore();
       toast(prefs.igFullPost ? "Showing the full Instagram post" : "Cropped to the video");
     });
     on("#fsAdjustBtn", () => {
@@ -1380,7 +1853,38 @@
       p.hidden = !open; p.classList.toggle("open", open);
       b.setAttribute("aria-pressed", String(open));
       if (open) { clearTimeout(fsIdleTimer); }
+      syncFsMore();
     });
+
+    // ---- v13 More panel ----
+    on("#fsMoreBtn", toggleFsMore);
+    on("#fsFavBtn", () => { const it = currentList()[state.playerIndex]; if (it) toggleFav(it); });
+    on("#fsMoreCloseBtn", closeFsMore);
+    on("#fsMoreFavBtn", () => { const it = currentList()[state.playerIndex]; if (it) toggleFav(it); });
+    on("#fsMoreWatchedBtn", () => { const it = currentList()[state.playerIndex]; if (it) toggleWatched(it); });
+    on("#fsMoreCopyBtn", copyCurrentLink);
+    on("#fsMoreBackupBtn", () => {
+      const it = currentList()[state.playerIndex];
+      if (it) { closeFsMore(); openEdit(it); const f = $("#editBackupUrl"); if (f) f.focus(); }
+    });
+    on("#fsMoreEditBtn", () => { const it = currentList()[state.playerIndex]; if (it) { closeFsMore(); openEdit(it); } });
+    on("#fsMoreDetailsBtn", () => { closeFsMore(); enterDetailsView(); });
+    on("#fsMoreDeleteBtn", () => { const it = currentList()[state.playerIndex]; if (it) { closeFsMore(); deleteItem(it); } });
+    on("#fsMoreFullPostBtn", () => {
+      prefs.igFullPost = !prefs.igFullPost; savePrefs();
+      layoutInstagram(); syncIgButtons(); syncFsMore();
+      toast(prefs.igFullPost ? "Showing the full Instagram post" : "Cropped to the video");
+    });
+    on("#fsMoreAdjustBtn", () => {
+      closeFsMore();
+      const p = $("#cropAdjust"), b = $("#fsAdjustBtn");
+      const open = p.hidden;
+      p.hidden = !open; p.classList.toggle("open", open);
+      if (b) b.setAttribute("aria-pressed", String(open));
+      if (open) { clearTimeout(fsIdleTimer); const z = $("#caZoomIn"); if (z) z.focus(); }
+    });
+    const fsOrig = $("#fsMoreOriginalBtn");
+    if (fsOrig) fsOrig.addEventListener("click", () => closeFsMore());
     on("#caZoomIn", () => nudgeInstagram("zoom", 1));
     on("#caZoomOut", () => nudgeInstagram("zoom", -1));
     on("#caUp", () => nudgeInstagram("dy", -1));
@@ -1410,6 +1914,7 @@
     });
 
     window.addEventListener("resize", () => {
+      if (!isMobileLayout() && sidebarOpen()) closeSidebar();
       if ($("#playerModal").hidden) return;
       const it = currentList()[state.playerIndex];
       if (it && it.platform === "facebook") sizeFacebookStage(it);
@@ -1418,22 +1923,38 @@
     document.addEventListener("keydown", (e) => {
       const tag = document.activeElement && document.activeElement.tagName;
       const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      trapSidebarTab(e);
+      if (sidebarOpen() && e.key === "Escape") { closeSidebar(); return; }
       if (e.key === "Escape") {
-        if (inFullscreen()) { exitFullscreen(); return; }
-        if (!$("#editModal").hidden) $("#editModal").hidden = true;
+        if (state.moreOpen) { closeFsMore(); return; }
+        if (!$("#installModal").hidden) $("#installModal").hidden = true;
+        else if (!$("#editModal").hidden) $("#editModal").hidden = true;
         else if (!$("#addModal").hidden) $("#addModal").hidden = true;
         else if (!$("#playerModal").hidden) closePlayer();
         else if (tvEnabled() && document.activeElement && document.activeElement.closest(".card")) document.activeElement.blur();
         return;
       }
       if (typing) return;
+      if (sidebarOpen() && e.key === "Backspace") { e.preventDefault(); closeSidebar(); return; }
       if (inFullscreen()) showFsControls();
-      if (e.key === "/") { e.preventDefault(); $("#searchInput").focus(); return; }
+      if (e.key === "/") { e.preventDefault(); closeSidebar(); $("#searchInput").focus(); return; }
       if (!$("#playerModal").hidden) {
+        if (state.moreOpen) {
+          if (e.key === "ArrowUp") { e.preventDefault(); moveFsFocus(-1); }
+          if (e.key === "ArrowDown") { e.preventDefault(); moveFsFocus(1); }
+          if (e.key === "Backspace") { e.preventDefault(); closeFsMore(); }
+          if (e.key === "m" || e.key === "M") { e.preventDefault(); closeFsMore(); }
+          return;
+        }
         if (e.key === "ArrowLeft") { e.preventDefault(); stepPlayer(-1); }
         if (e.key === "ArrowRight") { e.preventDefault(); stepPlayer(1); }
+        if (state.playerView === "big" && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+          e.preventDefault(); moveFsFocus(e.key === "ArrowDown" ? 1 : -1);
+        }
         if (e.key === "f" || e.key === "F") { e.preventDefault(); toggleFullscreen(); }
-        if (e.key === "t" || e.key === "T") { e.preventDefault(); toggleTheatre(); }
+        if (e.key === "t" || e.key === "T") { e.preventDefault(); toggleDetailsView(); }
+        if (e.key === "s" || e.key === "S") { e.preventDefault(); requestSound(); }
+        if ((e.key === "m" || e.key === "M") && state.playerView === "big") { e.preventDefault(); toggleFsMore(); }
         if (e.key === "Backspace") { e.preventDefault(); closePlayer(); }
         return;
       }
@@ -1454,8 +1975,9 @@
   }
 
   bind();
+  setupInstall();
   applyTvMode();
   if (prefs.theatre) $("#playerModal").classList.add("theatre");
   updateFsBtn();
-  checkAuth().then((ok) => { if (ok) loadItems(); });
+  checkAuth().then((ok) => { if (ok) { loadItems(); applyLaunchShortcut(); } });
 })();

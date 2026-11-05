@@ -564,3 +564,222 @@ body.tv-mode .tv-hint { display: block; }
 /* the edge strips must not swallow the new bar */
 .player-shell:fullscreen .fs-hit-bottom,
 .player-shell.pseudo-fs .fs-hit-bottom { height: 40px; }
+
+/* ==========================================================================
+   v12 — installable app
+   ========================================================================== */
+
+/* Install help modal */
+.install-hero {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px; margin-bottom: 14px;
+  background: var(--bg-elev2); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.install-hero img { border-radius: 14px; flex-shrink: 0; display: block; }
+.install-hero strong { display: block; font-size: 15px; margin-bottom: 2px; }
+.install-hero span { color: var(--text-dim); font-size: 13px; }
+.install-platform {
+  font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 8px;
+}
+.install-steps { margin: 0 0 10px; padding-left: 22px; color: var(--text); }
+.install-steps li { margin-bottom: 8px; line-height: 1.5; }
+.install-glyph { vertical-align: -3px; color: var(--accent); }
+.install-note {
+  margin: 0 0 6px; padding: 9px 11px; font-size: 12.5px; color: var(--text-dim);
+  background: var(--bg-elev); border-left: 3px solid var(--border); border-radius: 6px;
+}
+#installModal .modal-actions { justify-content: flex-end; }
+
+/* Notch / home-indicator spacing.
+   Only applied when actually launched from the home screen, so ordinary
+   browser layout (and the v9/v10 fullscreen maths) is left untouched. */
+body.standalone .topbar {
+  height: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+body.standalone .layout {
+  padding-top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
+}
+body.standalone .sidebar {
+  top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+}
+body.standalone .main {
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+}
+/* Keep the toast clear of the iPhone home indicator. */
+body.standalone .toast {
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+}
+
+/* The fullscreen ✕ must stay clear of a notch in landscape.
+   env() is 0 on devices without one, so this is a no-op elsewhere. */
+.player-shell:fullscreen .fs-exit,
+.player-shell.pseudo-fs .fs-exit {
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: calc(10px + env(safe-area-inset-left, 0px));
+}
+
+/* ==========================================================================
+   v13 — big-by-default player, More panel, TV side controls
+   ========================================================================== */
+
+/* The big view is the existing pseudo-fullscreen layout. Opening a card now
+   adds .pseudo-fs immediately, so the video owns the screen without needing
+   the browser Fullscreen API. True fullscreen (F) still works on top. */
+.player-shell.pseudo-fs .fs-btn-primary { background: #ff4d4d; border-color: #ff4d4d; }
+.fs-btn-danger { color: #ff9a9a; border-color: rgba(255,90,95,.45); }
+
+/* More panel — same family as .crop-adjust, but a proper action sheet. */
+.fs-more { display: none; }
+.fs-more.open {
+  display: flex; flex-direction: column; gap: 10px;
+  position: absolute; left: 12px; right: 12px; bottom: 74px; z-index: 9;
+  max-height: min(70%, 520px); overflow: auto;
+  background: rgba(12,12,14,.97); border: 1px solid #3a3a42; border-radius: 12px; padding: 12px;
+}
+.fs-more-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #fff; }
+.fs-more-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.fs-more-grid .fs-btn { justify-content: flex-start; text-align: left; text-decoration: none; }
+.fs-more-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #ddd; font-size: 13px; }
+.fs-more-row select {
+  background: #1c1c25; color: #fff; border: 1px solid #3a3a42; border-radius: 8px; padding: 6px 8px;
+}
+.fs-more-note { margin: 0; color: #9a9aa6; font-size: 12px; line-height: 1.45; }
+.fs-more .fs-btn:focus-visible, .fs-more select:focus-visible {
+  outline: 3px solid #4b8dff; outline-offset: 1px;
+}
+
+/* When the More panel is open, keep the right-hand TV controls out of the way. */
+.player-shell.more-open #fsNextBtn,
+.player-shell.more-open #fsFavBtn { opacity: 0; pointer-events: none; }
+
+/* Idle controls must not remain clickable while invisible. */
+.player-shell.fs-idle:not(.counting) .fs-bar .fs-btn,
+.player-shell.fs-idle:not(.counting) .fs-exit { pointer-events: none; }
+
+/* --- TV / remote: put the controls in the black side space --- */
+body.tv-mode .player-shell:fullscreen .fs-bar,
+body.tv-mode .player-shell.pseudo-fs .fs-bar {
+  display: block; background: none; padding: 0; inset: 0; pointer-events: none;
+}
+body.tv-mode .player-shell:fullscreen .fs-bar > *,
+body.tv-mode .player-shell.pseudo-fs .fs-bar > * { pointer-events: auto; position: absolute; }
+body.tv-mode .player-shell:fullscreen #fsPrevBtn,
+body.tv-mode .player-shell.pseudo-fs #fsPrevBtn {
+  left: 14px; top: 50%; transform: translateY(-50%);
+  width: 54px; height: 54px; border-radius: 50%; font-size: 26px;
+}
+body.tv-mode .player-shell:fullscreen #fsNextBtn,
+body.tv-mode .player-shell.pseudo-fs #fsNextBtn {
+  right: 14px; top: 50%; transform: translateY(-50%);
+  width: 54px; height: 54px; border-radius: 50%; font-size: 26px;
+}
+body.tv-mode .player-shell:fullscreen #fsMoreBtn,
+body.tv-mode .player-shell.pseudo-fs #fsMoreBtn { left: 14px; bottom: 14px; }
+body.tv-mode .player-shell:fullscreen #fsFavBtn,
+body.tv-mode .player-shell.pseudo-fs #fsFavBtn { right: 14px; bottom: 14px; }
+body.tv-mode .player-shell:fullscreen #fsCountdown,
+body.tv-mode .player-shell.pseudo-fs #fsCountdown {
+  top: 14px; left: 50%; transform: translateX(-50%); bottom: auto;
+}
+/* Instagram-specific buttons move into the More panel on TV so the side
+   margins stay clean. syncIgButtons() still controls their inline display. */
+body.tv-mode .player-shell:fullscreen #fsFullPostBtn,
+body.tv-mode .player-shell.pseudo-fs #fsFullPostBtn,
+body.tv-mode .player-shell:fullscreen #fsAdjustBtn,
+body.tv-mode .player-shell.pseudo-fs #fsAdjustBtn { display: none !important; }
+
+body.tv-mode .player-shell:fullscreen .fs-more.open,
+body.tv-mode .player-shell.pseudo-fs .fs-more.open {
+  left: auto; top: 12px; bottom: 12px; right: 12px;
+  width: clamp(220px, 24%, 320px); max-height: none;
+}
+body.tv-mode .player-shell:fullscreen .fs-more-grid,
+body.tv-mode .player-shell.pseudo-fs .fs-more-grid { grid-template-columns: 1fr; }
+
+/* Details view is the old detailed popup. It is just the normal shell with
+   .pseudo-fs removed; this marker keeps the intent clear for future edits. */
+.player-shell.details-view { /* no extra layout needed */ }
+
+/* ==========================================================================
+   v14 — mobile sidebar drawer: scrim, close button, scroll lock
+   ========================================================================== */
+
+/* Desktop keeps the permanent sidebar; the drawer furniture is hidden. */
+.sidebar-scrim { display: none; }
+.sidebar-head { display: none; }
+
+@media (max-width: 900px) {
+  /* The scrim sits above the topbar but below the drawer, so a tap anywhere
+     outside the sidebar closes it and the page behind cannot be scrolled. */
+  .sidebar-scrim {
+    display: block; position: fixed; inset: 0; z-index: 55;
+    background: rgba(0,0,0,.55);
+    opacity: 0; pointer-events: none; transition: opacity .18s ease;
+  }
+  body.sidebar-open .sidebar-scrim { opacity: 1; pointer-events: auto; }
+  body.sidebar-open { overflow: hidden; }
+
+  .sidebar { z-index: 60; }
+  .sidebar-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 2px 8px 10px; margin-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  .sidebar-title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint);
+  }
+  .sidebar-close { width: 34px; height: 34px; flex-shrink: 0; }
+  .sidebar .side-link:focus-visible,
+  .sidebar .tag-pill:focus-visible,
+  .sidebar-close:focus-visible {
+    outline: 3px solid #4b8dff; outline-offset: 1px;
+  }
+}
+
+/* ==========================================================================
+   v15 — sound helper: obvious muted state, one-tap unmute, session memory
+   ========================================================================== */
+
+.sound-helper { display: none; }
+.player-shell:fullscreen .sound-helper:not([hidden]),
+.player-shell.pseudo-fs .sound-helper:not([hidden]) {
+  display: inline-flex; align-items: center; gap: 10px;
+  position: absolute; left: 50%; bottom: 86px; transform: translateX(-50%);
+  z-index: 7; border: 0; border-radius: 999px; padding: 13px 20px;
+  background: linear-gradient(135deg, #ff4d4d, #ff7a59); color: #fff;
+  font-size: 15px; font-weight: 800; cursor: pointer;
+  box-shadow: 0 12px 30px rgba(255, 77, 77, .35);
+  max-width: calc(100% - 32px);
+}
+.sound-helper:focus-visible { outline: 3px solid #7dd3fc; outline-offset: 2px; }
+.sound-hint {
+  position: absolute; left: 16px; right: 16px; bottom: 148px; z-index: 7;
+  background: rgba(10, 12, 18, .92); border: 1px solid rgba(255, 176, 32, .55);
+  color: #ffe6b8; border-radius: 12px; padding: 10px 12px;
+  font-size: 12.5px; line-height: 1.45; text-align: center;
+}
+.player-shell.fs-idle:not(.counting) .sound-helper,
+.player-shell.fs-idle:not(.counting) .sound-hint { opacity: 0; pointer-events: none; }
+.player-shell.more-open .sound-helper,
+.player-shell.more-open .sound-hint,
+.player-shell.counting .sound-helper { display: none !important; }
+#fsSoundBtn[aria-pressed="true"] { background: #2dd4a7; border-color: #2dd4a7; color: #041210; }
+#soundActionBtn[aria-pressed="true"] { border-color: #2dd4a7; color: #2dd4a7; }
+
+/* TV / remote: keep the sound button in the side space, above More. */
+body.tv-mode .player-shell:fullscreen #fsSoundBtn,
+body.tv-mode .player-shell.pseudo-fs #fsSoundBtn {
+  left: 14px; bottom: 64px;
+}
+body.tv-mode .player-shell:fullscreen .sound-helper,
+body.tv-mode .player-shell.pseudo-fs .sound-helper { bottom: 110px; }
+
+@media (max-width: 900px) {
+  .player-shell:fullscreen .sound-helper:not([hidden]),
+  .player-shell.pseudo-fs .sound-helper:not([hidden]) { bottom: 96px; }
+  .sound-hint { bottom: 158px; }
+}
