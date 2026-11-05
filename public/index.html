@@ -140,6 +140,30 @@
       <button class="btn btn-small btn-danger" id="deleteBtn">Delete</button>
       <span class="embed-note">Playback blocked? Use “Open original” — some posts require login or disallow embedding.</span>
     </div>
+    <!-- v10: our own fullscreen chrome. Exit is always visible and sits top-LEFT,
+         away from Instagram's top-right "View profile" button. -->
+    <button class="fs-exit" id="fsExitBtn" title="Exit fullscreen" aria-label="Exit fullscreen">✕</button>
+    <div class="fs-bar" id="fsBar">
+      <button class="fs-btn" id="fsPrevBtn" title="Previous">‹</button>
+      <button class="fs-btn" id="fsNextBtn" title="Next">›</button>
+      <button class="fs-btn" id="fsFullPostBtn" aria-pressed="false">Show full post</button>
+      <button class="fs-btn" id="fsAdjustBtn" aria-pressed="false">Adjust picture</button>
+      <span class="fs-count" id="fsCountdown" hidden>Next in <b id="fsCountNum">5</b>s
+        <button class="fs-btn" id="fsCancelBtn">Cancel</button>
+      </span>
+    </div>
+    <div class="crop-adjust" id="cropAdjust" hidden>
+      <div class="ca-row"><span>Zoom</span>
+        <button class="fs-btn" id="caZoomOut" aria-label="Zoom out">−</button>
+        <button class="fs-btn" id="caZoomIn" aria-label="Zoom in">+</button>
+      </div>
+      <div class="ca-row"><span>Position</span>
+        <button class="fs-btn" id="caUp" aria-label="Move up">↑</button>
+        <button class="fs-btn" id="caDown" aria-label="Move down">↓</button>
+      </div>
+      <button class="fs-btn" id="caReset">Reset</button>
+      <span class="ca-hint">Only affects Instagram in fullscreen. Saved on this device.</span>
+    </div>
     <div class="upnext" id="upnextBar">
       <div class="upnext-head">
         <button class="btn btn-small" id="autoplayBtn" aria-pressed="true">Autoplay: on</button>

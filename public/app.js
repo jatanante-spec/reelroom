@@ -2,7 +2,7 @@
 (() => {
   "use strict";
 
-  const REELROOM_VERSION = "v9";
+  const REELROOM_VERSION = "v10";
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
@@ -346,7 +346,7 @@
       badge.style.cssText = "font-size:11px;color:#9a9a9a;border:1px solid #3a3a3a;border-radius:6px;padding:2px 6px;flex-shrink:0;";
       top.appendChild(badge);
     }
-    try { console.log("ReelRoom " + REELROOM_VERSION + " (video-first fullscreen, no crop)"); } catch {}
+    try { console.log("ReelRoom " + REELROOM_VERSION + " (Instagram crop, own fullscreen controls)"); } catch {}
   }
 
   function ensurePlayerActionButtons() {
@@ -457,6 +457,71 @@
     });
   }
 
+  // ===== v10: Instagram crop geometry =====
+  // Measured from real embeds on a 411px-wide viewport, confirmed identical on two
+  // reels and at two pixel densities (agreement within 0.2 percentage points).
+  // Everything is a fraction of the IFRAME's own width, so we render the frame at
+  // a fixed known width and scale the result — that keeps the crop identical on a
+  // phone, a tablet and a TV, and sidesteps Instagram's own 480px card cap.
+  const IG_RENDER_W = 480;
+  const IG_GEOM = {
+    reel: { top: 0.052, w: 0.7035, h: 1.2500 },  // header 5.2%, video 70.35% x 125%
+    post: { top: 0.143, w: 0.9200, h: 0.6050 },  // carousels/photos: wider, more padding
+  };
+  function igKind(item) { return item && item.media_type === "reel" ? "reel" : "post"; }
+  function igCropActive() { return inFullscreen() && state.igActive && !prefs.igFullPost; }
+
+  function layoutInstagram() {
+    const win = document.getElementById("igWindow");
+    const frame = win && win.querySelector("iframe");
+    const stage = $("#playerStage");
+    if (!win || !frame || !stage) return;
+    const crop = igCropActive();
+    win.classList.toggle("cropping", crop);
+    win.classList.toggle("fullpost", inFullscreen() && state.igActive && !!prefs.igFullPost);
+    if (!crop) {
+      frame.style.width = "100%";
+      frame.style.height = "100%";
+      frame.style.transform = "none";
+      return;
+    }
+    const item = currentList()[state.playerIndex];
+    const kind = igKind(item);
+    const G = IG_GEOM[kind];
+    const adj = (prefs.igAdjust && prefs.igAdjust[kind]) || { zoom: 1, dy: 0 };
+    const Wi = IG_RENDER_W, Hi = Wi * 2;   // 2:1 reproduces the measured page proportions
+    const Vw = G.w * Wi, Vh = G.h * Wi;
+    const Vx = (Wi - Vw) / 2, Vy = G.top * Wi;
+    const Wc = stage.clientWidth || window.innerWidth;
+    const Hc = stage.clientHeight || window.innerHeight;
+    const k = Math.min(Wc / Vw, Hc / Vh) * (adj.zoom || 1);
+    const tx = (Wc - Vw * k) / 2 - Vx * k;
+    const ty = (Hc - Vh * k) / 2 - Vy * k + (adj.dy || 0) * Hc;
+    frame.style.width = Wi + "px";
+    frame.style.height = Hi + "px";
+    frame.style.transform = "translate(" + tx.toFixed(1) + "px," + ty.toFixed(1) + "px) scale(" + k.toFixed(4) + ")";
+  }
+
+  function nudgeInstagram(what, dir) {
+    const item = currentList()[state.playerIndex];
+    const kind = igKind(item);
+    const a = prefs.igAdjust[kind] || (prefs.igAdjust[kind] = { zoom: 1, dy: 0 });
+    if (what === "zoom") a.zoom = Math.min(2.5, Math.max(0.5, (a.zoom || 1) * (dir > 0 ? 1.06 : 1 / 1.06)));
+    if (what === "dy") a.dy = Math.min(0.4, Math.max(-0.4, (a.dy || 0) + dir * 0.02));
+    if (what === "reset") { a.zoom = 1; a.dy = 0; }
+    savePrefs(); layoutInstagram();
+  }
+
+  function syncIgButtons() {
+    const on = state.igActive;
+    for (const id of ["#fsFullPostBtn", "#fsAdjustBtn"]) {
+      const b = $(id); if (b) b.style.display = on ? "" : "none";
+    }
+    const fp = $("#fsFullPostBtn");
+    if (fp) { fp.textContent = prefs.igFullPost ? "Crop to video" : "Show full post"; fp.setAttribute("aria-pressed", String(!!prefs.igFullPost)); }
+    if (!on) { const p = $("#cropAdjust"); if (p) { p.hidden = true; p.classList.remove("open"); } }
+  }
+
   let lastFitKey = "", stageRO = null, fitRaf = 0;
 
   // Size the Facebook box to fit INSIDE the stage. The stage now has a definite
@@ -506,6 +571,7 @@
         if (++burst > 10) return; // belt and braces: never spin on a pathological layout
         const it = currentList()[state.playerIndex];
         if (it && state.fbAutoFit) fitFacebook(it);
+        if (state.igActive) layoutInstagram();
       });
     });
     stageRO.observe(stage);
@@ -545,7 +611,12 @@
     const shell = $("#playerShell");
     if (!shell) return;
     if (inFullscreen()) { ensureFsChrome(); showFsControls(); }
-    else { clearTimeout(fsIdleTimer); fsIdleTimer = null; shell.classList.remove("fs-idle", "counting"); }
+    else {
+      clearTimeout(fsIdleTimer); fsIdleTimer = null;
+      shell.classList.remove("fs-idle", "counting");
+      const p = $("#cropAdjust"); if (p) { p.hidden = true; p.classList.remove("open"); }
+      const ab = $("#fsAdjustBtn"); if (ab) ab.setAttribute("aria-pressed", "false");
+    }
   }
 
   function stageClass(src, embed) {
@@ -647,9 +718,15 @@
     cancelCountdown();
     const cls = stageClass(active, embed);
     const embedSrc = embedWithApi(active.platform, item, embed);
+    state.igActive = active.platform === "instagram" && !!embedSrc;
+    const frameHtml = `<iframe src="${esc(embedSrc)}" title="${esc(item.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
     stage.innerHTML = embedSrc
-      ? `<div class="${cls}" id="stageBox"><iframe src="${esc(embedSrc)}" title="${esc(item.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`
+      ? (state.igActive
+          ? `<div class="${cls} ig-window" id="igWindow">${frameHtml}</div>`
+          : `<div class="${cls}" id="stageBox">${frameHtml}</div>`)
       : `<div style="padding:40px;color:#aaa;">No embed available. Use “Open original”.</div>`;
+    if (state.igActive) layoutInstagram();
+    syncIgButtons();
 
     state.fbAutoFit = item.platform === "facebook" && !useBackup && !embed.includes("/plugins/post.php");
     lastFitKey = "";
@@ -718,6 +795,7 @@
     $("#playerStage").innerHTML = "";
     document.body.style.overflow = "";
     state.playerIndex = -1;
+    state.igActive = false;
     resetBridge("");
     const back = state.returnFocusId && document.querySelector(`#grid .card[data-id="${state.returnFocusId}"]`);
     if (back) back.focus();
@@ -917,7 +995,9 @@
   // ================= v8: prefs, fullscreen, theatre, TV, up-next =================
   const PREFS_KEY = "reelroom.prefs.v1";
   function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch { return {}; } }
-  const prefs = Object.assign({ tvMode: null, theatre: false, autoplay: true, advanceSecs: 0, continueClearedAt: null }, loadPrefs());
+  const prefs = Object.assign({ tvMode: null, theatre: false, autoplay: true, advanceSecs: 0, continueClearedAt: null,
+    igFullPost: false, igAdjust: { reel: { zoom: 1, dy: 0 }, post: { zoom: 1, dy: 0 } } }, loadPrefs());
+  if (!prefs.igAdjust || !prefs.igAdjust.reel) prefs.igAdjust = { reel: { zoom: 1, dy: 0 }, post: { zoom: 1, dy: 0 } };
   function savePrefs() { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {} }
 
   function looksLikeTV() {
@@ -952,6 +1032,7 @@
   function refitStage() {
     const it = currentList()[state.playerIndex];
     if (it && state.fbAutoFit) { lastFitKey = ""; fitFacebook(it); }
+    if (state.igActive) { layoutInstagram(); syncIgButtons(); }
   }
   async function toggleFullscreen() {
     const shell = $("#playerShell");
@@ -964,9 +1045,9 @@
       shell.classList.add("pseudo-fs");
     }
     updateFsBtn(); syncFsChrome(); setTimeout(refitStage, 60);
-    if (!prefs.fsHintShown) {
-      prefs.fsHintShown = true; savePrefs();
-      toast("Tap the video for controls · Esc or Back to exit");
+    if (prefs.fsHintVersion !== 10) {
+      prefs.fsHintVersion = 10; prefs.fsHintShown = true; savePrefs();
+      toast("Tap the video for controls · ✕ top-left to exit");
     }
   }
   function exitFullscreen() {
@@ -1085,6 +1166,7 @@
   function cancelCountdown() {
     clearInterval(countdownTimer); countdownTimer = null;
     const c = $("#autoplayCountdown"); if (c) c.hidden = true;
+    const fb2 = $("#fsCountdown"); if (fb2) fb2.hidden = true;
     const shell = $("#playerShell"); if (shell) shell.classList.remove("counting");
   }
   function startCountdown(seconds) {
@@ -1094,9 +1176,12 @@
     let n = seconds;
     const box = $("#autoplayCountdown"), num = $("#countdownNum");
     box.hidden = false; num.textContent = n;
+    const fb = $("#fsCountdown"), fn = $("#fsCountNum");
+    if (fb) fb.hidden = false; if (fn) fn.textContent = n;
     const shell = $("#playerShell"); if (shell) shell.classList.add("counting");
     countdownTimer = setInterval(() => {
       n--; num.textContent = n;
+      const fn2 = $("#fsCountNum"); if (fn2) fn2.textContent = n;
       if (n <= 0) { cancelCountdown(); stepPlayer(1); }
     }, 1000);
   }
@@ -1277,6 +1362,30 @@
       prefs.continueClearedAt = new Date().toISOString(); savePrefs(); renderContinue();
       toast("Continue watching cleared");
     });
+
+    // ---- v10 fullscreen bar + Instagram crop controls ----
+    const on = (id, fn) => { const b = $(id); if (b) b.addEventListener("click", (e) => { e.stopPropagation(); showFsControls(); fn(); }); };
+    on("#fsExitBtn", exitFullscreen);
+    on("#fsPrevBtn", () => stepPlayer(-1));
+    on("#fsNextBtn", () => stepPlayer(1));
+    on("#fsCancelBtn", () => { cancelCountdown(); setUpnextStatus("Auto-advance cancelled."); });
+    on("#fsFullPostBtn", () => {
+      prefs.igFullPost = !prefs.igFullPost; savePrefs();
+      layoutInstagram(); syncIgButtons();
+      toast(prefs.igFullPost ? "Showing the full Instagram post" : "Cropped to the video");
+    });
+    on("#fsAdjustBtn", () => {
+      const p = $("#cropAdjust"), b = $("#fsAdjustBtn");
+      const open = p.hidden;
+      p.hidden = !open; p.classList.toggle("open", open);
+      b.setAttribute("aria-pressed", String(open));
+      if (open) { clearTimeout(fsIdleTimer); }
+    });
+    on("#caZoomIn", () => nudgeInstagram("zoom", 1));
+    on("#caZoomOut", () => nudgeInstagram("zoom", -1));
+    on("#caUp", () => nudgeInstagram("dy", -1));
+    on("#caDown", () => nudgeInstagram("dy", 1));
+    on("#caReset", () => { nudgeInstagram("reset", 0); toast("Picture adjustment reset"); });
 
     document.addEventListener("fullscreenchange", () => { updateFsBtn(); syncFsChrome(); setTimeout(refitStage, 60); });
 

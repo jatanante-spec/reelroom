@@ -489,3 +489,78 @@ body.tv-mode .tv-hint { display: block; }
   .player-nav { gap: 2px; }
   .player-nav .icon-btn { width: 34px; height: 34px; }
 }
+
+/* ================= v10: Instagram crop + our own fullscreen chrome ================= */
+
+/* In fullscreen our old title bar and up-next bar are replaced by fsBar, so they
+   must not sit on top of Instagram's own header any more. */
+.player-shell:fullscreen .player-top,
+.player-shell.pseudo-fs .player-top,
+.player-shell:fullscreen .upnext,
+.player-shell.pseudo-fs .upnext { display: none !important; }
+
+/* Always-visible exit, top-LEFT (Instagram puts "View profile" top-right). */
+.fs-exit { display: none; }
+.player-shell:fullscreen .fs-exit,
+.player-shell.pseudo-fs .fs-exit {
+  display: flex; align-items: center; justify-content: center;
+  position: absolute; top: 10px; left: 10px; z-index: 7;
+  width: 42px; height: 42px; border-radius: 50%;
+  background: rgba(0,0,0,.78); color: #fff; border: 1px solid rgba(255,255,255,.28);
+  font-size: 19px; cursor: pointer;
+}
+.player-shell:fullscreen .fs-exit:hover,
+.player-shell.pseudo-fs .fs-exit:hover { background: rgba(0,0,0,.95); }
+
+/* Bottom control bar — opaque enough to read over any video, wraps on a phone,
+   and is inside the shell so it can never be cut off. */
+.fs-bar { display: none; }
+.player-shell:fullscreen .fs-bar,
+.player-shell.pseudo-fs .fs-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(to top, rgba(0,0,0,.92) 55%, rgba(0,0,0,0));
+  transition: opacity .22s ease;
+}
+.fs-btn {
+  background: rgba(255,255,255,.14); color: #fff; border: 1px solid rgba(255,255,255,.25);
+  border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.fs-btn:hover { background: rgba(255,255,255,.26); }
+.fs-btn[aria-pressed="true"] { background: #4b8dff; border-color: #4b8dff; }
+.fs-count { color: #fff; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; }
+.fs-count b { color: #7fb2ff; font-variant-numeric: tabular-nums; }
+.player-shell.fs-idle:not(.counting) .fs-bar { opacity: 0; pointer-events: none; }
+.player-shell.counting .fs-bar { opacity: 1 !important; pointer-events: auto !important; }
+
+/* Adjust-picture panel */
+.crop-adjust { display: none; }
+.crop-adjust.open {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  position: absolute; left: 12px; right: 12px; bottom: 74px; z-index: 8;
+  background: rgba(12,12,14,.96); border: 1px solid #3a3a42; border-radius: 12px; padding: 12px;
+}
+.ca-row { display: flex; align-items: center; gap: 6px; color: #ddd; font-size: 13px; }
+.ca-hint { color: #8a8a94; font-size: 11px; flex-basis: 100%; }
+
+/* --- the crop window --- */
+/* One iframe, restyled rather than re-created, so entering fullscreen never
+   restarts the video. */
+.ig-window { position: relative; background: #000; }
+.ig-window > iframe { border: 0; display: block; transform-origin: 0 0; }
+.ig-window.cropping {
+  position: absolute !important; inset: 0 !important;
+  width: 100% !important; height: 100% !important; max-width: none !important;
+  aspect-ratio: auto !important; overflow: hidden;
+}
+.ig-window.fullpost {
+  position: absolute !important; inset: 0 !important;
+  width: 100% !important; height: 100% !important; max-width: none !important;
+  aspect-ratio: auto !important; overflow: auto; background: #fff;
+}
+.ig-window.fullpost > iframe { width: 100%; height: 100%; }
+
+/* the edge strips must not swallow the new bar */
+.player-shell:fullscreen .fs-hit-bottom,
+.player-shell.pseudo-fs .fs-hit-bottom { height: 40px; }
